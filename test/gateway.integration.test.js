@@ -66,6 +66,8 @@ test('BLOCK: reading ~/.ssh/id_rsa never reaches the real server', async () => {
   assert.ok(res.error, 'expected a policy-block error, not a forwarded result');
   assert.match(res.error.message, /Blocked by AgentGuard policy/);
   assert.match(res.error.message, /filesystem\.deny|denied pattern/);
+  assert.equal(res.error.data.risk, 'CRITICAL');
+  assert.equal(res.error.data.rule, 'filesystem.deny');
 });
 
 test('BLOCK: an unlisted shell command is blocked', async () => {

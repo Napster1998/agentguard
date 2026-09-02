@@ -30,6 +30,22 @@ test('a path-shaped argument yields a filesystem action', () => {
   const fsAction = actions.find((a) => a.resource.type === 'filesystem');
   assert.ok(fsAction);
   assert.equal(fsAction.resource.value, '~/.ssh/id_rsa');
+  assert.equal(fsAction.actionType, 'FILE_READ');
+});
+
+test('a write-shaped tool name yields a FILE_WRITE action', () => {
+  const actions = mcpRequestToActions(
+    {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'write_file', arguments: { path: './out.txt', content: 'hello' } },
+    },
+    ctx
+  );
+  const fsAction = actions.find((a) => a.resource.type === 'filesystem');
+  assert.ok(fsAction);
+  assert.equal(fsAction.actionType, 'FILE_WRITE');
 });
 
 test('a shell-shaped tool with a command argument yields a shell action', () => {

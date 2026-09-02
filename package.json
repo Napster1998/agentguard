@@ -2,17 +2,19 @@
   "name": "agentguard-mcp-gateway",
   "version": "0.1.0",
   "private": true,
-  "description": "Phase 1 proof-of-concept: a lightweight MCP-aware security gateway with a deterministic, extensible runtime policy engine.",
+  "description": "A lightweight local AI Agent Security Gateway: MCP interception + deterministic runtime policy enforcement, plus local AI environment discovery and security posture assessment.",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "bin": {
+    "agentguard": "./bin/agentguard.js",
     "agentguard-gateway": "./bin/agentguard-gateway.js"
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\"",
-    "demo": "node examples/run-demo.mjs"
+    "demo": "node examples/run-demo.mjs",
+    "scan": "node bin/agentguard.js scan"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"

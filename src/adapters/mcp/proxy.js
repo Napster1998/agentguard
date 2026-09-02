@@ -6,6 +6,7 @@ import { PolicyEngine } from '../../core/policy-engine.js';
 import { AuditLogger } from '../../core/audit-logger.js';
 import { combineDecisions, VERDICT } from '../../core/decision.js';
 import { RISK } from '../../core/risk.js';
+import { createSecurityEvent } from '../../core/security-event.js';
 import { mcpRequestToActions } from './translate.js';
 
 const NO_ACTION_DECISION = { verdict: VERDICT.ALLOW, reason: 'No resources required policy evaluation.', risk: RISK.NONE, rule: null };
@@ -62,13 +63,14 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
       NO_ACTION_DECISION
     );
 
-    logger.log({
-      timestamp: context.timestamp,
+    const primaryAction = actions.find((a) => a.resource.type !== 'mcp-server') || actions[0];
+
+    const event = createSecurityEvent({
       sessionId,
       source: 'mcp',
+      actionType: primaryAction?.actionType ?? null,
+      toolName: message.params?.name ?? null,
       serverName,
-      method: message.method,
-      toolName: message.params?.name,
       resource: actions.map((a) => `${a.resource.type}:${a.resource.value}`).join(', ') || null,
       decision: final.verdict,
       risk: final.risk,
@@ -80,13 +82,19 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
         verdict: s.decision.verdict,
         rule: s.decision.rule,
       })),
+      timestamp: context.timestamp,
     });
+    logger.log(event);
 
     if (final.verdict === VERDICT.BLOCK) {
       const response = {
         jsonrpc: '2.0',
         id: message.id,
-        error: { code: -32001, message: `Blocked by AgentGuard policy: ${final.reason}` },
+        error: {
+          code: -32001,
+          message: `Blocked by AgentGuard policy: ${final.reason}`,
+          data: { risk: final.risk, rule: final.rule, eventId: event.id },
+        },
       };
       stdout.write(JSON.stringify(response) + '\n');
       return;

@@ -4,6 +4,10 @@ const PATH_KEY_RE = /path|file|dir|directory|target|cwd|location|filename/i;
 const SHELL_TOOL_RE = /shell|exec|command|run_cmd|terminal|bash|powershell|^cmd$/i;
 const SHELL_KEY_RE = /^(command|cmd|script)$/i;
 const URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+// Best-effort only: we don't know each server's tool schema, so a tool name
+// is the only signal available for read vs write. Defaults to read (FILE_READ
+// is far more common among MCP filesystem tools) rather than over-claiming.
+const WRITE_TOOL_RE = /write|create|append|delete|remove|unlink|rm|update|edit|save|rename|move|mkdir/i;
 
 // Deliberately narrow, high-confidence patterns. This is a heuristic scan of
 // tool-call arguments, not a general-purpose DLP engine (see README limitations).
@@ -72,6 +76,7 @@ export function mcpRequestToActions(message, context) {
   ];
 
   const isShellTool = SHELL_TOOL_RE.test(toolName);
+  const filesystemVerb = WRITE_TOOL_RE.test(toolName) ? 'write' : 'read';
 
   walkStrings(args, (key, value) => {
     if (isShellTool && SHELL_KEY_RE.test(key)) {
@@ -92,7 +97,7 @@ export function mcpRequestToActions(message, context) {
       }
     } else if (PATH_KEY_RE.test(key) || looksLikePath(value)) {
       actions.push(
-        createAction({ verb: 'read', resourceType: 'filesystem', resourceValue: value, context: baseContext })
+        createAction({ verb: filesystemVerb, resourceType: 'filesystem', resourceValue: value, context: baseContext })
       );
     }
 

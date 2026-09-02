@@ -39,10 +39,11 @@ test('cloud credential: read ~/.aws/credentials -> BLOCK', () => {
   assert.equal(d.verdict, VERDICT.BLOCK);
 });
 
-test('environment file: read .env -> WARN (documented default, not BLOCK)', () => {
+test('environment file: read .env -> WARN (documented default, not BLOCK), risk HIGH', () => {
   const d = engine.evaluate(fsAction('.env'));
   assert.equal(d.verdict, VERDICT.WARN);
   assert.equal(d.rule, 'filesystem.warn');
+  assert.equal(d.risk, 'HIGH');
 });
 
 test('normal MCP tool: invoke trusted server -> ALLOW', () => {

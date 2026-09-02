@@ -1,6 +1,7 @@
 import { VERDICT, makeDecision } from './decision.js';
 import { RISK } from './risk.js';
 import { matchesAny } from './glob-match.js';
+import { assessRisk } from './risk-engine.js';
 
 /**
  * Fills in missing policy sections so a partial/minimal policy file never
@@ -43,7 +44,7 @@ export class PolicyEngine {
         return makeDecision({
           verdict: VERDICT.ALLOW,
           reason: 'No policy rule exists for this resource type',
-          risk: RISK.NONE,
+          risk: assessRisk({ sensitivity: RISK.NONE, verdict: VERDICT.ALLOW }),
           rule: null,
         });
     }
@@ -55,37 +56,41 @@ export class PolicyEngine {
 
     const deniedBy = matchesAny(value, deny);
     if (deniedBy) {
+      const verdict = VERDICT.BLOCK;
       return makeDecision({
-        verdict: VERDICT.BLOCK,
+        verdict,
         reason: `Path matches a denied pattern in filesystem.deny ("${deniedBy}"); credential/sensitive paths are not accessible to agents.`,
-        risk: RISK.CRITICAL,
+        risk: assessRisk({ sensitivity: RISK.CRITICAL, verdict }),
         rule: 'filesystem.deny',
       });
     }
 
     const warnedBy = matchesAny(value, warn);
     if (warnedBy) {
+      const verdict = VERDICT.WARN;
       return makeDecision({
-        verdict: VERDICT.WARN,
+        verdict,
         reason: `Path matches a watched pattern in filesystem.warn ("${warnedBy}"); often legitimate but flagged for review.`,
-        risk: RISK.MEDIUM,
+        risk: assessRisk({ sensitivity: RISK.HIGH, verdict }),
         rule: 'filesystem.warn',
       });
     }
 
     if (allow && allow.length > 0 && !matchesAny(value, allow)) {
+      const verdict = VERDICT.WARN;
       return makeDecision({
-        verdict: VERDICT.WARN,
+        verdict,
         reason: 'Path is outside the configured filesystem.allow allowlist.',
-        risk: RISK.MEDIUM,
+        risk: assessRisk({ sensitivity: RISK.LOW, verdict }),
         rule: 'filesystem.allow',
       });
     }
 
+    const verdict = VERDICT.ALLOW;
     return makeDecision({
-      verdict: VERDICT.ALLOW,
+      verdict,
       reason: 'Path does not match any deny/warn rule.',
-      risk: RISK.NONE,
+      risk: assessRisk({ sensitivity: RISK.LOW, verdict }),
       rule: 'filesystem.allow',
     });
   }
@@ -95,18 +100,20 @@ export class PolicyEngine {
     const { allowed } = this.policy.shell;
 
     if (allowed.some((a) => a.toLowerCase() === binary.toLowerCase())) {
+      const verdict = VERDICT.ALLOW;
       return makeDecision({
-        verdict: VERDICT.ALLOW,
+        verdict,
         reason: `Command "${binary}" is in shell.allowed.`,
-        risk: RISK.NONE,
+        risk: assessRisk({ sensitivity: RISK.LOW, verdict }),
         rule: 'shell.allowed',
       });
     }
 
+    const verdict = VERDICT.BLOCK;
     return makeDecision({
-      verdict: VERDICT.BLOCK,
+      verdict,
       reason: `Command "${binary}" is not in the shell.allowed allowlist. Arbitrary shell execution is blocked by default.`,
-      risk: RISK.HIGH,
+      risk: assessRisk({ sensitivity: RISK.MEDIUM, verdict }),
       rule: 'shell.allowed',
     });
   }
@@ -116,21 +123,23 @@ export class PolicyEngine {
     const { allowed_servers: allowedServers } = this.policy.mcp;
 
     if (allowedServers.length === 0 || allowedServers.includes(serverName)) {
+      const verdict = VERDICT.ALLOW;
       return makeDecision({
-        verdict: VERDICT.ALLOW,
+        verdict,
         reason:
           allowedServers.length === 0
             ? 'No mcp.allowed_servers restriction configured.'
             : `Server "${serverName}" is in mcp.allowed_servers.`,
-        risk: RISK.NONE,
+        risk: assessRisk({ sensitivity: RISK.LOW, verdict }),
         rule: 'mcp.allowed_servers',
       });
     }
 
+    const verdict = VERDICT.WARN;
     return makeDecision({
-      verdict: VERDICT.WARN,
+      verdict,
       reason: `Server "${serverName}" is not in the mcp.allowed_servers trusted list.`,
-      risk: RISK.MEDIUM,
+      risk: assessRisk({ sensitivity: RISK.MEDIUM, verdict }),
       rule: 'mcp.allowed_servers',
     });
   }
@@ -146,39 +155,43 @@ export class PolicyEngine {
       );
 
     if (isAllowed) {
+      const verdict = VERDICT.ALLOW;
       return makeDecision({
-        verdict: VERDICT.ALLOW,
+        verdict,
         reason:
           allowedDomains.length === 0
             ? 'No network.allowed_domains restriction configured.'
             : `Domain "${hostname}" is in network.allowed_domains.`,
-        risk: RISK.NONE,
+        risk: assessRisk({ sensitivity: RISK.LOW, verdict }),
         rule: 'network.allowed_domains',
       });
     }
 
+    const verdict = VERDICT.WARN;
     return makeDecision({
-      verdict: VERDICT.WARN,
+      verdict,
       reason: `Domain "${hostname}" is not in network.allowed_domains. (Best-effort: only domains visible in MCP tool-call arguments can be checked.)`,
-      risk: RISK.MEDIUM,
+      risk: assessRisk({ sensitivity: RISK.MEDIUM, verdict }),
       rule: 'network.allowed_domains',
     });
   }
 
   #evaluateSecret(action) {
     if (!this.policy.secrets.block_exfiltration) {
+      const verdict = VERDICT.ALLOW;
       return makeDecision({
-        verdict: VERDICT.ALLOW,
+        verdict,
         reason: 'secrets.block_exfiltration is disabled.',
-        risk: RISK.NONE,
+        risk: assessRisk({ sensitivity: RISK.NONE, verdict }),
         rule: 'secrets.block_exfiltration',
       });
     }
 
+    const verdict = VERDICT.BLOCK;
     return makeDecision({
-      verdict: VERDICT.BLOCK,
+      verdict,
       reason: `Argument value matches a known secret pattern ("${action.resource.value}"); possible credential exfiltration.`,
-      risk: RISK.CRITICAL,
+      risk: assessRisk({ sensitivity: RISK.CRITICAL, verdict, credentialInvolved: true }),
       rule: 'secrets.block_exfiltration',
     });
   }
