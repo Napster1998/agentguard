@@ -10,7 +10,7 @@ const policy = applyDefaults({
     deny: ['~/.ssh/**', '~/.aws/**', '~/.aws/credentials'],
     warn: ['.env', '.env.*'],
   },
-  shell: { allowed: ['git', 'npm'] },
+  shell: { allowed: ['git', 'npm'], deny: ['rm', 'shutdown'] },
   mcp: { allowed_servers: ['trusted-server'] },
   network: { allowed_domains: ['github.com'] },
   secrets: { block_exfiltration: true },
@@ -70,6 +70,21 @@ test('shell: unlisted binary -> BLOCK', () => {
   const d = engine.evaluate(createAction({ verb: 'execute', resourceType: 'shell', resourceValue: 'curl', context: ctx }));
   assert.equal(d.verdict, VERDICT.BLOCK);
   assert.equal(d.risk, 'HIGH');
+});
+
+test('shell: explicitly denied binary -> BLOCK, rule shell.deny', () => {
+  const d = engine.evaluate(createAction({ verb: 'execute', resourceType: 'shell', resourceValue: 'rm', context: ctx }));
+  assert.equal(d.verdict, VERDICT.BLOCK);
+  assert.equal(d.rule, 'shell.deny');
+});
+
+test('shell: shell.deny wins even if the binary is also in shell.allowed', () => {
+  const conflicting = applyDefaults({ shell: { allowed: ['git'], deny: ['git'] } });
+  const d = new PolicyEngine(conflicting).evaluate(
+    createAction({ verb: 'execute', resourceType: 'shell', resourceValue: 'git', context: ctx })
+  );
+  assert.equal(d.verdict, VERDICT.BLOCK);
+  assert.equal(d.rule, 'shell.deny');
 });
 
 test('network: allowed domain -> ALLOW', () => {

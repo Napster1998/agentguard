@@ -87,3 +87,76 @@ test('WARN: an untrusted MCP server still forwards the call', async () => {
   const res = responses.get(4);
   assert.ok(res.result, 'WARN should still forward to the real server');
 });
+
+test('response inspection BLOCKs a response containing a known secret pattern (default policy)', async () => {
+  const responses = await runThroughGateway([
+    { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'leak_secret', arguments: {} } },
+  ]);
+  const res = responses.get(5);
+  assert.ok(res.error, 'a secret-pattern response should never reach the agent by default');
+  assert.match(res.error.message, /Response blocked by AgentGuard policy/);
+  assert.equal(res.error.data.risk, 'CRITICAL');
+});
+
+test('response inspection WARNs (forwards) a suspicious-instruction-shaped response by default', async () => {
+  const responses = await runThroughGateway([
+    { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'injected_response', arguments: {} } },
+  ]);
+  const res = responses.get(6);
+  assert.ok(res.result, 'suspicious-instruction is log-only (WARN) by default, so it still forwards');
+});
+
+test('agentId is captured from the initialize handshake clientInfo, not left as sessionId', async () => {
+  const os = await import('node:os');
+  const logFile = path.join(os.tmpdir(), `agentguard-identity-test-${Date.now()}.jsonl`);
+  const responses = await runThroughGatewayWithLog(
+    [
+      { jsonrpc: '2.0', id: 7, method: 'initialize', params: { clientInfo: { name: 'demo-agent', version: '1.0.0' } } },
+      { jsonrpc: '2.0', id: 8, method: 'tools/call', params: { name: 'read_file', arguments: { path: './README.md' } } },
+    ],
+    logFile
+  );
+  assert.ok(responses.get(8).result);
+
+  const fs = await import('node:fs');
+  const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+  const event = JSON.parse(lines[lines.length - 1]);
+  assert.equal(event.agentId, 'demo-agent');
+  assert.notEqual(event.agentId, event.sessionId);
+  fs.unlinkSync(logFile);
+});
+
+function runThroughGatewayWithLog(requests, logFile) {
+  return new Promise((resolve, reject) => {
+    const gw = spawn(
+      process.execPath,
+      [GATEWAY, '--policy', TEST_POLICY, '--log', logFile, '--server-name', 'trusted-server', '--', process.execPath, FIXTURE_SERVER],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    const responses = new Map();
+    const expectedIds = new Set(requests.map((r) => r.id));
+    const timer = setTimeout(() => {
+      gw.kill();
+      reject(new Error('Timed out waiting for gateway responses'));
+    }, 5000);
+
+    const rl = readline.createInterface({ input: gw.stdout });
+    rl.on('line', (line) => {
+      if (!line.trim()) return;
+      const msg = JSON.parse(line);
+      responses.set(msg.id, msg);
+      if ([...expectedIds].every((id) => responses.has(id))) {
+        clearTimeout(timer);
+        gw.kill();
+        resolve(responses);
+      }
+    });
+
+    gw.on('error', reject);
+
+    for (const req of requests) {
+      gw.stdin.write(JSON.stringify(req) + '\n');
+    }
+  });
+}

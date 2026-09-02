@@ -1,13 +1,13 @@
-# AgentGuard — Local AI Agent Security Gateway (Phase 1 + 2 POC)
+# AgentGuard — Local AI Agent Security Gateway (Phase 1 + 2 + 3 POC)
 
 > **This is a DevDay proof-of-concept, not a production EDR or a complete AI
 > security platform.** It demonstrates a real, working security control: a
-> local posture scanner that discovers what AI/agent software and exposure
-> exist on a developer machine, and a real MCP stdio proxy that intercepts
-> tool calls, evaluates them against a deterministic policy, and enforces
-> ALLOW/WARN/BLOCK at runtime. Everything still out of scope — full EDR,
-> anomaly/ML detection, a web dashboard, kernel-level monitoring — is listed
-> honestly in [Limitations](#limitations) and [Phase 3](#phase-3).
+> local posture scanner, an MCP stdio proxy that enforces policy at runtime,
+> a shell-command wrapper that enforces policy on non-MCP commands, and a
+> deterministic correlation engine that flags risky *patterns* of behavior
+> across a session. Everything still out of scope — full EDR, anomaly/ML
+> detection, a web dashboard, kernel-level monitoring — is listed honestly in
+> [Limitations](#limitations) and [Phase 4](#phase-4).
 
 ## The problem
 
@@ -16,18 +16,8 @@ local model runtimes) on the same machines that hold source code, `.env`
 files, SSH keys, and cloud credentials. A vulnerability scanner can tell you
 the *software* is configured insecurely; it cannot tell you **what the agent
 can access, and what it actually did at runtime** — did it read
-`~/.ssh/id_rsa`? Did it shell out to `curl`? Is a local model server
-listening on every interface instead of just localhost? That is the question
-AgentGuard answers, in two complementary layers:
-
-- **Layer 1 — Local AI Security Posture** (`agentguard scan`): DISCOVER what
-  AI/agent software, MCP servers, exposed services, and sensitive resources
-  exist on this machine, and ASSESS the risk that combination represents —
-  *before* an agent runs.
-- **Layer 2 — Runtime Agent Security** (`agentguard gateway`): OBSERVE what
-  an agent is trying to do through MCP, EVALUATE it against policy, and
-  ENFORCE ALLOW/WARN/BLOCK, with every decision AUDITed — *while* an agent
-  runs.
+`~/.ssh/id_rsa`? Did it shell out to `curl`? Did a "helpful" tool response
+quietly try to redirect it? That is the question AgentGuard answers.
 
 We are not attempting to classify "malicious AI" or infer intent — nothing
 here claims to know *why* an agent did something. We model **capabilities,
@@ -49,76 +39,95 @@ Agent
 ```
 
 The product narrative this POC demonstrates end-to-end (`npm run demo`):
-**"Before the agent starts, we assess its security posture. While it runs,
-we enforce what it is allowed to do."**
+**"We don't decide whether the AI is good or evil. We define what an AI
+agent is allowed to do, observe what it actually does, and enforce that
+boundary at runtime."**
+
+## Posture vs. Runtime vs. Correlation
+
+Three deliberately separate concepts, never merged into one meaningless
+number:
+
+| | Answers | Produced by |
+|---|---|---|
+| **Posture** | "What *could* happen?" — before any agent runs | `agentguard scan` → `SecurityPosture` (findings, severity counts, indicative score) |
+| **Runtime** | "What *actually* happened?" — while an agent runs | `agentguard gateway` / `agentguard exec` → `SecurityEvent`s (ALLOW/WARN/BLOCK + risk, per action) |
+| **Correlation** | "Does the *sequence* of what happened indicate a risky pattern?" | `agentguard events` → `Detection`s (a behavioral pattern match, not proof of anything) |
+
+A posture score and a runtime event count are answering different
+questions and are never combined. A `Detection` is a third, separate thing
+again: it says a *sequence* of already-evaluated events looks like a known
+risky pattern — it does not re-judge any individual event, and it is not
+evidence of compromise, just a pattern worth a human looking at.
 
 ## Architecture
 
 ```
                                  Developer Machine
-┌──────────────────────────────────────────────────────────────────────┐
-│                                                                       │
-│  AI Agent / Harness (Claude Code, Claude Desktop, etc.)              │
-│             │ spawns, over stdio, as its configured "MCP server"     │
-│             ▼                                                       │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │                  AgentGuard Gateway                      │        │
-│  │                                                          │        │
-│  │  MCP adapter (src/adapters/mcp)                          │        │
-│  │    tools/call JSON-RPC  --->  generic Action[]            │        │
-│  │                                                          │        │
-│  │  Policy Engine  --->  sensitivity  --->  Risk Engine       │        │
-│  │    Action  --->  Decision {ALLOW | WARN | BLOCK, risk}     │        │
-│  │                                                          │        │
-│  │  SecurityEvent + Audit Logger                            │        │
-│  │    every decision -> JSONL (the event store) + stderr    │        │
-│  └──────────────────────┬────────────────────────────────────┘        │
-│             │ spawns, over stdio, the real command                   │
-│             ▼                                                       │
-│  Real MCP Server (e.g. @modelcontextprotocol/server-filesystem)      │
-│                                                                       │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │             Local Posture Scanner (agentguard scan)      │        │
-│  │                                                          │        │
-│  │  src/adapters/discovery/  (uses src/adapters/host/ OS    │        │
-│  │    agent-detection          primitives: process list,    │        │
-│  │    mcp-config                listening ports, PATH       │        │
-│  │    network-exposure           lookup — read-only,        │        │
-│  │    sensitive-resources        fixed-arg execFile calls)  │        │
-│  │             │                                            │        │
-│  │             ▼                                            │        │
-│  │  findings-rules.js  --->  SecurityFinding[]                │        │
-│  │             │                                            │        │
-│  │             ▼                                            │        │
-│  │  SecurityPosture (findings, severity counts, score)      │        │
-│  └─────────────────────────────────────────────────────────┘        │
-│                                                                       │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                                                                           │
+│  AI Agent / Harness (Claude Code, Claude Desktop, etc.)                  │
+│     │ MCP: spawns, over stdio, as its configured "MCP server"            │
+│     │ Shell: routed through `agentguard exec` instead of running direct  │
+│     ▼                                     ▼                              │
+│  ┌─────────────────────────────┐   ┌──────────────────────────────┐      │
+│  │      AgentGuard Gateway      │   │      agentguard exec          │      │
+│  │                              │   │                              │      │
+│  │  MCP adapter                 │   │  argv --> Action[]            │      │
+│  │    tools/call --> Action[]    │   │  (real, already-split argv,   │      │
+│  │  Response inspector           │   │   not a guessed string)       │      │
+│  │    result --> findings         │   │                              │      │
+│  │                              │   │  BLOCK => never spawn()        │      │
+│  │  clientInfo --> agentId        │   └──────────────┬───────────────┘      │
+│  │                              │                  │                     │
+│  │  Policy Engine --> sensitivity │                  │                     │
+│  │       --> Risk Engine          │◄─────────────────┘  (same engine,       │
+│  │  Action --> Decision            │                      same core)        │
+│  │    {ALLOW|WARN|BLOCK, risk}    │                                       │
+│  │                              │                                       │
+│  │  SecurityEvent + AuditLogger  │                                       │
+│  │    every decision -> JSONL    │                                       │
+│  └──────────────┬────────────────┘                                       │
+│     │ spawns, over stdio, the real command                               │
+│     ▼                                                                   │
+│  Real MCP Server                                                        │
+│                                                                           │
+│  ┌────────────────────────────┐   ┌──────────────────────────────┐      │
+│  │  Local Posture Scanner       │   │  agentguard events            │      │
+│  │  (agentguard scan)           │   │                              │      │
+│  │  src/adapters/discovery/     │   │  JSONL --> grouped by session  │      │
+│  │  --> SecurityFinding[]        │   │  --> Correlation Engine        │      │
+│  │  --> SecurityPosture          │   │      (deterministic sequence  │      │
+│  │      (score, severity counts)│   │       rules) --> Detection[]   │      │
+│  └────────────────────────────┘   └──────────────────────────────┘      │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 The gateway is itself an MCP "server" from the agent's point of view, and an
-MCP "client" from the real server's point of view — a transparent stdio
-proxy sitting in the middle. The scanner is a separate, independent
-read-only pass over the host; it does not need the gateway to be running,
-and the gateway does not need a scan to have been run.
+MCP "client" from the real server's point of view. `agentguard exec` is the
+same pattern applied to a directly-run command: AgentGuard is the one that
+calls `spawn()`, so on BLOCK it simply never does. Both are **enforcement
+boundaries for whatever is actually routed through them** — see
+[Limitations](#limitations).
 
-**Why the core is decoupled from MCP:** `Action`, `Decision`, `PolicyEngine`,
-`RiskEngine`, `SecurityEvent`, `SecurityFinding`, and `SecurityPosture` in
-[`src/core`](src/core) know nothing about JSON-RPC or MCP. `src/adapters/mcp`
-is the *only* MCP-aware code for the runtime side, and `src/adapters/host` +
-`src/adapters/discovery` are the *only* OS-aware code for the posture side.
-A future shell wrapper or filesystem watcher would produce the same `Action`
-shape and reuse the identical `PolicyEngine`/`RiskEngine`, unmodified:
+**Why the core stays decoupled from any one adapter:** `Action`, `Decision`,
+`PolicyEngine`, `RiskEngine`, `SecurityEvent`, `SecurityFinding`,
+`SecurityPosture`, `Detection` in [`src/core`](src/core) know nothing about
+MCP, stdio, or shells. `src/adapters/mcp` and `src/adapters/shell` are two
+independent, real proof points of that design — both produce the same
+`Action` shape and are evaluated by the identical `PolicyEngine`/`RiskEngine`,
+unmodified:
 
 ```
                  +----------------+
 MCP (built)  --->|                |
                  |                |
-Shell (Phase 3)->| Policy Engine  |--->| Risk Engine |---> ALLOW
+Shell (built)--->| Policy Engine  |--->| Risk Engine |---> ALLOW
                  |                |                  ---> WARN
-FS   (Phase 3)-->|                |                  ---> BLOCK
+FS  (Phase 4) -->|                |                  ---> BLOCK
                  |                |
-Net  (Phase 3)-->|                |
+Net (Phase 4) -->|                |
                  +----------------+
 ```
 
@@ -132,12 +141,9 @@ branch:
 
 - a credential-pattern match always forces **CRITICAL**, regardless of
   anything else
-- **BLOCK** is never reported below **HIGH** — a denied action is
-  inherently risky even when its specific resource's baseline sensitivity is
-  lower
+- **BLOCK** is never reported below **HIGH**
 - **WARN** is never reported below **MEDIUM**
-- **ALLOW** reports the resource's own sensitivity, with a **LOW** floor —
-  every observed action carries some baseline risk simply by being an action
+- **ALLOW** reports the resource's own sensitivity, with a **LOW** floor
 
 | Example | Verdict | Risk |
 |---|---|---|
@@ -147,144 +153,199 @@ branch:
 | `invoke trusted MCP tool` | ALLOW | LOW |
 | `invoke unknown MCP server` | WARN | MEDIUM |
 
-(These are exercised exactly as written in [`test/risk-engine.test.js`](test/risk-engine.test.js).)
+(Exercised exactly as written in [`test/risk-engine.test.js`](test/risk-engine.test.js).)
+
+## Runtime enforcement: MCP gateway + `agentguard exec`
+
+**MCP gateway** (Phase 1/2, unchanged): wraps a stdio MCP server, evaluates
+every `tools/call`, blocks by never forwarding, warns by forwarding-and-logging.
+
+**`agentguard exec --policy <file> [--log <file>] -- <command> [args...]`**
+(new in Phase 3): evaluates `command args...` against the *same* policy
+**before ever calling `spawn()`**. On BLOCK, the process is never created —
+this is genuine prevention, not after-the-fact observation, for anything
+routed through it. Unlike the MCP adapter, which has to guess resource
+shapes out of a joined command string or unknown JSON keys, `agentguard exec`
+gets real, already-split `argv`: the binary is unambiguous, and each
+argument is checked on its own merits (so `agentguard exec -- npm pack
+~/.ssh/id_rsa` is BLOCKed by `filesystem.deny` even though `npm` itself is
+allowed).
+
+**IMPORTANT — read this before treating either as a general interceptor:**
+both are enforcement boundaries for commands *actually routed through them*,
+exactly like a firewall only sees traffic sent to it. A command run directly
+by the agent, bypassing `agentguard exec`, or an MCP call made outside the
+gateway's stdio pipe, is invisible to AgentGuard. Neither is EDR, and neither
+claims host-level visibility.
+
+`shell.deny` (new) is checked *before* `shell.allowed` and always wins, even
+for a binary also present in `allowed` — a second layer for commands that
+should never run regardless of what else is permitted.
+
+## MCP response inspection
+
+The gateway now inspects the **response** to every forwarded `tools/call`,
+not just the request (`src/adapters/mcp/response-inspect.js`). Deterministic
+pattern checks only — this is a detection signal, never proof of anything:
+
+- the same secret patterns used on the request side, now applied to response
+  content (`mcp_response_inspection.block_on_secret_pattern`, **default
+  true** — mirrors the request-side default)
+- a narrow, high-false-negative instruction-injection pattern list ("ignore
+  previous instructions", etc.) — `block_on_suspicious_instruction`,
+  **default false** (log/WARN only; blocking on a keyword match alone is
+  opt-in, per design)
+
+A response is only logged as its own `SecurityEvent` (`direction: "response"`)
+when something was actually found — the overwhelmingly common clean-response
+case isn't double-logged. A BLOCKed response never reaches the agent; a
+synthesized JSON-RPC error replaces it, same mechanism as a request-side
+BLOCK.
+
+## Identity
+
+`agentId` is now captured from the MCP `initialize` handshake's
+`clientInfo.name` — the one piece of real identity signal the protocol
+actually provides — instead of always defaulting to `sessionId`. If a client
+never sends `clientInfo` (or this is an `agentguard exec` run, which has no
+MCP handshake at all), `agentId` falls back to `sessionId`, documented, not
+invented. **Nothing stops a client from sending a false `clientInfo.name`** —
+this is the strongest signal available, not an authenticated identity.
+`sessionId` (one connection/run) and `serverName`/`toolName` (one MCP
+connection / one tool) remain distinct concepts, as before.
 
 ## Event correlation
 
-Every evaluated action becomes a `SecurityEvent` (`src/core/security-event.js`),
-written to the gateway's JSONL audit log — **the audit log is the event
-store**; no separate database was added for a POC. `agentguard events` reads
-it back and groups by `sessionId`, answering "what did this agent do during
-this session?" One gateway connection = one session. There is no identity
-signal beyond that yet: `agentId` currently equals `sessionId` (documented
-limitation — see below). This is the foundation for correlation (e.g. a
-`.env` read followed by a network call in the same session), not
-correlation logic itself — deliberately, per the brief: we are not building
-DLP or exfiltration detection in this phase.
+Every evaluated action becomes a `SecurityEvent`, written to the JSONL audit
+log — **the audit log is the event store**, no separate database. `agentguard
+events` groups it by `sessionId` and now also runs the **correlation engine**
+(`src/core/correlation-engine.js`) against each session's full, time-ordered
+event list. Four deterministic, ordered-sequence rules — no ML, no scoring
+model, just "does pattern A appear before pattern B (before C)":
+
+| Rule | Pattern | Severity |
+|---|---|---|
+| Sensitive read → network | HIGH+ risk `FILE_READ` followed by any `NETWORK_REQUEST` | HIGH |
+| Credential access → shell | CRITICAL `FILE_READ` (ssh/aws-level) followed by `SHELL_EXEC` | CRITICAL |
+| Untrusted server → sensitive read | untrusted-MCP-server WARN followed by a HIGH+ `FILE_READ` | HIGH |
+| Escalation pattern | untrusted server → sensitive read → network, all three in order | CRITICAL |
+
+Each rule reports at most one `Detection` per session (not every recurrence)
+to keep output readable, and rules are **not mutually exclusive** —
+overlapping evidence can trigger more than one, and that's shown, not
+deduplicated away. Correlation is deliberately scoped to **one session's own
+events**: it does not span across a gateway session and a separate
+`agentguard exec` run (see Identity/Limitations — `sessionId` doesn't persist
+across adapters today), and it says nothing about intent — see
+[Posture vs. Runtime vs. Correlation](#posture-vs-runtime-vs-correlation).
 
 ## Threat model
 
 **In scope:** an AI agent (trusted to run code, but not necessarily trusted
-with unrestricted access) invoking tools through an MCP server launched as a
-local child process over stdio, on a machine the developer controls the
-gateway's policy file and host access for.
+with unrestricted access) invoking tools through an MCP server over stdio,
+and/or running shell commands routed through `agentguard exec`, on a machine
+the developer controls the policy file and host access for.
 
 1. **Prompt injection** — malicious content manipulates the agent into
-   attempting an unintended sensitive action. AgentGuard does not detect the
-   injection itself (it cannot see the agent's reasoning), but it blocks the
-   *resulting* tool call the same as any other policy violation — the
-   defense is at the action boundary, not the input.
+   attempting an unintended action. AgentGuard does not detect the injection
+   itself (it cannot see the agent's reasoning) — but MCP response
+   inspection now flags an *injection-shaped response* as a detection
+   signal, and the gateway blocks the *resulting* tool call the same as any
+   other policy violation regardless.
 2. **Malicious/untrusted MCP server** — `mcp.allowed_servers` plus
-   `agentguard scan`'s MCP discovery flag any server not explicitly trusted.
+   `agentguard scan`'s MCP discovery flag any server not explicitly trusted;
+   response inspection adds visibility into what an untrusted server
+   actually returns.
 3. **Credential exposure** — `filesystem.deny`/`warn` block/flag credential
-   paths at runtime; `agentguard scan`'s sensitive-resource check flags their
-   mere presence as a standing exposure, before any agent even runs.
+   paths at runtime, in both the MCP gateway and `agentguard exec`;
+   `agentguard scan` flags their mere presence as a standing exposure.
 4. **Excessive filesystem access** — `filesystem.allow` scopes an agent to a
-   workspace; anything outside it WARNs.
-5. **Unexpected network access** — best-effort only (see Limitations):
-   `network.allowed_domains` catches a URL visible in a tool-call argument,
-   nothing more.
-6. **Agent misconfiguration** — `agentguard scan` surfaces a service bound
-   to `0.0.0.0` instead of localhost, or a workspace with `.env`/credentials
-   sitting where a misconfigured agent could reach them.
+   workspace; anything outside it WARNs, in both adapters.
+5. **Dangerous shell execution** — `shell.allowed`/`shell.deny`, enforced
+   for MCP shell-style tool calls and, now, for any command actually routed
+   through `agentguard exec` — with real prevention (never spawned) in the
+   latter case.
+6. **Sensitive data exposure via a chained action** — a single sensitive
+   read isn't inherently a violation; the correlation engine flags a
+   sensitive read followed by external network activity in the same session
+   as a pattern worth reviewing.
+7. **Untrusted tools** — `agentguard scan`'s MCP discovery plus the
+   untrusted-server-then-sensitive-access correlation rule.
+8. **Agent misconfiguration** — `agentguard scan` surfaces a service bound
+   to `0.0.0.0`, or a workspace with `.env`/credentials sitting where a
+   misconfigured agent could reach them.
 
 **Out of scope / explicitly not defended against:** a malicious or
-compromised *MCP server binary itself* tampering with the gateway process;
-an agent that bypasses the gateway entirely by talking to a server directly
-(enforced by MCP *configuration*, not a kernel-level guarantee);
-symlink/TOCTOU attacks on filesystem paths; anything happening inside the
-real MCP server's own process; true model intent (we observe actions, never
-reasoning).
+compromised *MCP server binary itself* tampering with the gateway process; a
+command or MCP call that bypasses AgentGuard's entry points entirely
+(enforced by *configuration*, not a kernel-level guarantee); symlink/TOCTOU
+attacks on filesystem paths; anything happening inside a real MCP
+server/subprocess's own internals; true model intent (we observe actions and
+their sequence, never reasoning).
 
 ## Current capabilities
 
-**Runtime gateway:**
-- Wraps any stdio MCP server: `agentguard gateway --policy <file> -- <command> [args...]`
-- Parses every `tools/call` request, extracts the tool name and arguments,
-  heuristically classifies argument values into resource types (filesystem,
-  shell, network, secret — see [Limitations](#limitations))
-- Tags each action with an `ActionType` (`MCP_TOOL_CALL`, `FILE_READ`,
-  `FILE_WRITE`, `SHELL_EXEC`, `NETWORK_REQUEST`, `SECRET_PATTERN_MATCH`) —
-  only types something in `src/adapters` actually produces; `FILE_WRITE` is
-  a tool-name heuristic (`write_file`, `create_*`, etc.), defaulting to read
-- Evaluates each resource against a YAML policy and computes ALLOW/WARN/BLOCK
-  with an explicit reason, a `RiskEngine`-derived risk level, and matched rule
-- **BLOCK** requests never reach the real server — a synthesized JSON-RPC
-  error (with `risk`/`rule`/`eventId` in its `data` field) goes straight back
-- **WARN** requests are forwarded (fail-open) but logged with the reason
-- Every decision becomes a `SecurityEvent`, written as JSONL and mirrored to
-  stderr
+**Runtime — MCP gateway:** everything from Phase 1/2 (wraps a stdio MCP
+server; heuristic request classification into filesystem/shell/network/secret
+resources with `ActionType` tagging; ALLOW/WARN/BLOCK with risk and matched
+rule; BLOCK never forwards), **plus (Phase 3):** response inspection on every
+forwarded call's result; `agentId` captured from `clientInfo`; richer
+`SecurityEvent`s (`direction`, `destination`, `metadata`).
 
-**Posture scanner (`agentguard scan`):**
-- Detects known local AI/agent runtimes (Ollama, Claude Code, OpenClaw,
-  Hermes) via running processes and PATH lookups — read-only, fixed-arg
-  `execFile` calls only, no shell interpolation, no elevated privileges
-- Discovers MCP client configurations (`.mcp.json`, Claude Code/Desktop
-  configs) and cross-references server names against the gateway policy's
-  `mcp.allowed_servers` for a trust label — **parses JSON only, never
-  executes a discovered command**
-- Checks this machine's own listening-socket table for a detected agent's
-  known default port bound beyond localhost (e.g. Ollama on `0.0.0.0:11434`)
-  — self-inspection only, never opens an outbound connection
-- Checks **existence and permissions only** (never contents) of sensitive
-  paths (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `.env`,
-  `credentials.json`, `secrets.yaml`)
-- Produces a `SecurityPosture`: findings with id/title/severity/category/
-  description/evidence/recommendation, severity counts, an indicative 0–100
-  score, and an overall risk label
+**Runtime — `agentguard exec` (new):** evaluates a real, already-split
+command+argv against the same policy before ever spawning it; BLOCK means
+the process never runs; every run logged as a `SecurityEvent` with
+`source: "shell-exec"`.
 
-**`agentguard events`** reads the gateway's JSONL audit log and prints a
-per-session, time-ordered view of what an agent did.
+**Posture scanner (`agentguard scan`, unchanged from Phase 2):** detects
+known local AI/agent runtimes, discovers MCP client configs (parses JSON
+only, never executes), checks this machine's own listening-socket table for
+exposure beyond localhost, checks sensitive-path existence/permissions only
+(never contents), produces a `SecurityPosture`.
+
+**`agentguard events` (Phase 3 additions):** `--risk <level>` and
+`--blocked` filters on the displayed event list; runs the **correlation
+engine** against each session's full (unfiltered) event set and prints any
+resulting `Detection`s beneath that session.
 
 ## Limitations (read before you trust this for anything real)
 
-**Runtime gateway:**
-- **stdio transport only.** Remote MCP servers over HTTP/SSE are not
-  intercepted.
-- **Heuristic resource extraction, not schema-aware.** We don't know each
-  MCP server's tool schemas ahead of time, so path/shell/network/write-vs-read
-  classification is all name- and shape-based guessing. This both misses
-  things (an oddly-named argument) and occasionally produces a low-signal
-  extra match (e.g. a shell command string containing a URL also gets
-  flagged as filesystem-shaped — harmless, evaluated on its own merits, just
-  visible in the audit log).
-- **Secret detection is a narrow pattern match** (AWS access key IDs, PEM
-  private-key headers, a generic `key=<20+ chars>` assignment) applied to
-  outbound tool-call *arguments* only — not a general DLP engine, and it
-  does not inspect tool call *responses* at all.
-- **Network enforcement is best-effort and MCP-level only.** We can see a
-  URL if it appears in a tool-call argument; we cannot see raw sockets the
-  real MCP server process opens on its own.
-- **No path canonicalization.** Glob matching is string-based with `~`
-  expansion against the real home directory; no symlink resolution.
-- **Trusting the pipe, not the binary.** Enforcement depends on the agent
-  actually being configured to run through AgentGuard.
-- **`agentId` === `sessionId`.** There is no identity signal beyond one
-  gateway connection yet, so correlating the *same agent* across multiple
-  gateway runs isn't possible today.
+**Runtime — both MCP gateway and `agentguard exec`:**
+- **Enforcement boundary, not an EDR.** Only commands/calls actually routed
+  through one of these two entry points are observed or enforced — anything
+  bypassing them is invisible. This is the single most important limitation
+  in the whole project.
+- **Heuristic resource extraction, not schema-aware** (MCP side) — see the
+  original Phase 1/2 caveats: name/shape-based guessing, occasional
+  low-signal extra matches, no path canonicalization/symlink resolution.
+- **Secret detection is a narrow pattern match**, not general DLP.
+- **Network enforcement is best-effort, MCP-argument-visible-URLs only** —
+  no raw socket visibility into what a real MCP server process does on its
+  own.
+- **MCP response inspection is pattern-matching, not comprehension** — will
+  have both false positives (a legitimate response happens to contain
+  "ignore" and "instructions" near each other) and false negatives (a
+  rephrased injection attempt). It inspects `result` content only, not every
+  possible MCP response shape.
+- **`agentId` is only as trustworthy as what a client chooses to send** in
+  `clientInfo.name` — nothing authenticates it. `agentguard exec` has no
+  handshake at all, so it always falls back to its own `sessionId`.
+- **Correlation is session-scoped and doesn't span adapters.** A gateway
+  session and a separate `agentguard exec` run get different `sessionId`s
+  today (visible directly in `npm run demo`'s output) — a pattern split
+  across both is not detected. This is the direct consequence of the
+  identity limitation above, not a separate bug.
+- **Correlation rules are simple deterministic sequence checks**, not
+  statistical/ML detection — they will miss variants and can, in principle,
+  false-positive on an unusual-but-legitimate sequence. A `Detection` is a
+  prompt for human review, not a verdict.
 
-**Posture scanner:**
-- **Process/PATH detection is a small, hand-maintained registry**
-  (`src/adapters/discovery/known-agents.js`) of publicly-known names — it
-  will miss anything not in that table, and a process merely *named*
-  similarly to a known agent produces a false positive. Absence from a scan
-  means "not checked for", never "confirmed absent".
-- **MCP config discovery checks a fixed, non-exhaustive list of common
-  locations** and does not scan the filesystem for arbitrary config files.
-- **Network exposure checking depends on OS tooling being present and
-  permitted** (`netstat` on Windows; `lsof` on POSIX — if `lsof` isn't
-  installed, POSIX network-exposure detection silently returns nothing
-  rather than failing the scan; this is a documented degrade, not a bug).
-  It is explicitly *not* a port scanner: only ports belonging to an already
-  *detected* agent are considered, and it never opens a connection anywhere.
-- **The 0–100 score is a simple, fixed per-severity deduction — indicative,
-  not a calibrated risk model.** Read the severity counts, not the number,
-  as the primary signal.
-- **A local scanner is not a replacement for EDR.** It cannot see every
-  OS-level action, does not run continuously, and does not guarantee
-  detection or prevention of data exfiltration.
-- **Nothing here overclaims intent or malice.** A finding means "this
-  configuration/exposure exists", never "this agent is malicious."
+**Posture scanner:** unchanged from Phase 2 — a small hand-maintained agent
+registry (misses anything not in it), a fixed non-exhaustive list of MCP
+config locations, network-exposure checking dependent on `netstat`/`lsof`
+being available (degrades to nothing found, not a crash, if not), an
+indicative (not calibrated) score, not a replacement for EDR, never
+overclaims intent or malice.
 
 ## How to run the POC
 
@@ -292,8 +353,10 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 73 tests: policy/risk engine, translation, discovery (all with fake data sources), and real end-to-end proxy + CLI spawns
-npm run demo    # the full narrative: agentguard scan -> gateway enforces 7 ALLOW/WARN/BLOCK scenarios -> agentguard events
+npm test        # 98 tests: policy/risk engine, translation, discovery, correlation,
+                 # response inspection, exec wrapper (all with fake data sources where
+                 # possible) + real end-to-end proxy/exec/CLI process spawns
+npm run demo    # the full narrative — see "DevDay demo flow" below
 npm run scan    # agentguard scan against THIS machine
 ```
 
@@ -301,31 +364,31 @@ To wrap a real MCP server:
 
 ```bash
 node bin/agentguard.js gateway \
-  --policy policy/default-policy.yaml \
-  --log audit.jsonl \
-  --server-name filesystem \
+  --policy policy/default-policy.yaml --log audit.jsonl --server-name filesystem \
   -- npx -y @modelcontextprotocol/server-filesystem /path/to/workspace
 ```
 
-Then point your agent's MCP client configuration at this command instead of
-the real server directly (e.g. in Claude Desktop's `claude_desktop_config.json`,
-replace the server's `command`/`args` with the invocation above). The
-standalone `bin/agentguard-gateway.js` still works identically, unchanged,
-for the same purpose — `agentguard gateway` and `agentguard-gateway` call
-the exact same underlying command.
-
-To review what an agent did afterward:
+To run a command through the same policy, with real prevention on BLOCK:
 
 ```bash
-node bin/agentguard.js events --log audit.jsonl [--session <sessionId>]
+node bin/agentguard.js exec --policy policy/default-policy.yaml --log audit.jsonl -- git status
 ```
+
+To review what happened afterward, with correlation:
+
+```bash
+node bin/agentguard.js events --log audit.jsonl [--session <id>] [--risk <level>] [--blocked]
+```
+
+The standalone `bin/agentguard-gateway.js` still works identically for the
+gateway — `agentguard gateway` and `agentguard-gateway` call the exact same
+underlying command.
 
 ## Configuring policies
 
-Policy is a YAML file with five sections (see
-[`policy/default-policy.yaml`](policy/default-policy.yaml) for the full
+(See [`policy/default-policy.yaml`](policy/default-policy.yaml) for the full
 annotated reference, and `applyDefaults()` in
-[`src/core/policy-engine.js`](src/core/policy-engine.js) for exact defaults):
+[`src/core/policy-engine.js`](src/core/policy-engine.js) for exact defaults.)
 
 ```yaml
 filesystem:
@@ -334,35 +397,34 @@ filesystem:
   warn: []       # -> WARN
 
 shell:
-  allowed: []    # binaries allowed via a shell-style MCP tool; empty = block all
+  allowed: []    # binaries allowed via an MCP shell-style tool call, or `agentguard exec`
+  deny: []       # checked FIRST, always wins even over `allowed`
 
 mcp:
-  allowed_servers: []   # empty = trust all servers (no reputation data yet);
-                         # also used by `agentguard scan` to label MCP trust
+  allowed_servers: []   # empty = trust all; also used by `agentguard scan` for trust labels
 
 network:
   allowed_domains: []   # empty = no restriction (best-effort visibility only)
 
 secrets:
   block_exfiltration: true
+
+mcp_response_inspection:
+  block_on_secret_pattern: true          # mirrors the request-side default
+  block_on_suspicious_instruction: false # log/WARN only by default
 ```
 
 **Documented default-policy decisions** (deliberate, not arbitrary):
 
 | Action | Verdict | Risk | Why |
 |---|---|---|---|
-| Read `~/.ssh/**`, `~/.aws/**`, `~/.kube/**`, `*.pem`, etc. | **BLOCK** | CRITICAL | No legitimate agent workflow needs raw credential material. |
-| Read `.env`, `.env.*` | **WARN** | HIGH | Often legitimately read by build tooling/tests; a hard block breaks normal dev workflows, so we surface it with real weight instead of silently allowing it. |
-| Invoke a server not in `mcp.allowed_servers` | **WARN** (or ALLOW if the list is empty) | MEDIUM | Phase 1/2 has no server-reputation data; empty list = trust everything configured, non-empty = explicit allowlist. |
-| Shell-style tool call with a command not in `shell.allowed` | **BLOCK** | HIGH | Arbitrary shell execution is the highest-leverage action an agent can take; deny-by-default here, unlike filesystem. |
-| A tool-call argument matching a known secret pattern | **BLOCK** | CRITICAL | Credential material should never be an argument to any tool call. |
-
-`ActionType` (`src/core/action.js`) intentionally only lists action shapes
-something in `src/adapters` actually produces today — `SHELL_EXEC` is real
-(the MCP adapter observes shell-style tool calls), but there is no
-independent, non-MCP shell-execution *event source* yet. Adding one is
-Phase 3 work; the abstraction (`ActionType`, `Action`, `PolicyEngine`) is
-already shaped to receive it without modification.
+| Read `~/.ssh/**`, `~/.aws/**`, etc. | **BLOCK** | CRITICAL | No legitimate agent workflow needs raw credential material. |
+| Read `.env`, `.env.*` | **WARN** | HIGH | Often legitimate; a hard block breaks normal dev workflows, so it's surfaced with real weight instead. |
+| Invoke a server not in `mcp.allowed_servers` | **WARN** (or ALLOW if empty) | MEDIUM | No server-reputation data; empty = trust everything configured. |
+| Shell command not in `shell.allowed` (MCP or `agentguard exec`) | **BLOCK** | HIGH | Arbitrary shell execution is the highest-leverage action available; deny-by-default. |
+| Shell command in `shell.deny` | **BLOCK**, always | HIGH | Wins even over `shell.allowed` — defense in depth. |
+| A tool-call argument or response matching a known secret pattern | **BLOCK** | CRITICAL | Credential material should never cross this boundary in either direction. |
+| A response matching an instruction-injection pattern | **WARN** by default | MEDIUM | A detection signal, not proof — blocking on keyword-matching alone is opt-in. |
 
 ## Example security events
 
@@ -381,70 +443,97 @@ already shaped to receive it without modification.
 [BLOCK] Reason: Path matches a denied pattern in filesystem.deny ("~/.aws/**"); credential/sensitive paths are not accessible to agents.
 ```
 
-The matching JSONL `SecurityEvent` (`--log <file>`) carries the same
-information structured for machine consumption:
+A response-side event, and a correlation `Detection` printed by `agentguard events`:
 
-```json
-{"id":"…","sessionId":"…","agentId":"…","timestamp":"2026-09-02T10:00:00.000Z","source":"mcp","actionType":"FILE_READ","toolName":"read_file","serverName":"trusted-server","resource":"mcp-server:trusted-server, filesystem:~/.aws/credentials","decision":"BLOCK","risk":"CRITICAL","rule":"filesystem.deny","reason":"…","subDecisions":[{"resourceType":"mcp-server","value":"trusted-server","verdict":"ALLOW","rule":"mcp.allowed_servers"},{"resourceType":"filesystem","value":"~/.aws/credentials","verdict":"BLOCK","rule":"filesystem.deny"}]}
+```
+[WARN] MCP request received
+[WARN] Tool: search
+[WARN] Policy decision: WARN
+[WARN] Reason: Response contains an instruction-injection-shaped pattern. This is a detection signal, not confirmed compromise.
 ```
 
-And an example `SecurityFinding` from `agentguard scan`:
-
-```json
-{
-  "id": "NETWORK-001",
-  "title": "Ollama exposed beyond localhost",
-  "severity": "HIGH",
-  "category": "network",
-  "description": "Ollama is listening on an address other than localhost, making it potentially reachable from other machines on the network.",
-  "evidence": "Ollama listening on 0.0.0.0:11434",
-  "recommendation": "Bind the service to localhost (127.0.0.1) unless remote access is explicitly required."
-}
+```
+Detection: Potential sensitive-data exposure pattern
+Severity: HIGH
+Session: 56589f71-91e4-40cd-b5aa-795134c0276e
+Agent: 56589f71-91e4-40cd-b5aa-795134c0276e
+A sensitive file read (filesystem:.env) was followed by a network request (attacker.example.com) in the same session.
+Recommendation: Review whether this agent session needed both sensitive-file access and external network access.
 ```
 
 ## Project layout
 
 ```
-bin/agentguard.js             umbrella CLI: gateway | scan | events
-bin/agentguard-gateway.js     standalone gateway CLI (unchanged behavior, now a thin wrapper)
+bin/agentguard.js             umbrella CLI: gateway | scan | events | exec
+bin/agentguard-gateway.js     standalone gateway CLI (unchanged behavior, thin wrapper)
 
 src/core/                     transport-agnostic: Action, ActionType, Decision, PolicyEngine,
                                  RiskEngine, SecurityEvent, SecurityFinding, SecurityPosture,
-                                 findings-rules, AuditLogger, glob matching
+                                 Detection, CorrelationEngine, findings-rules, resource-heuristics,
+                                 AuditLogger, glob matching
 
-src/adapters/mcp/             MCP-specific: JSON-RPC translation + the stdio proxy
+src/adapters/mcp/             MCP-specific: JSON-RPC translation, the stdio proxy, response inspection
+src/adapters/shell/           the agentguard exec wrapper (real argv -> Action[], spawn only on non-BLOCK)
 src/adapters/host/            OS primitives: process list, listening ports, PATH lookup
 src/adapters/discovery/       agent detection, MCP config discovery, network exposure,
                                  sensitive-resource scan, and the scan orchestrator
 
-src/cli/                      gateway-command, scan-command, events-command (shared by both bins)
+src/cli/                      gateway-command, scan-command, events-command, exec-command
 
 policy/default-policy.yaml    shipped reference policy
-examples/                     runnable demo (scan -> gateway -> events) + its policy
+examples/                     the DevDay demo (scan -> policy sweep -> attack chain ->
+                                 exec block -> events+correlation) + its policy
 test/                         unit tests (dependency-injected, no reliance on host state) +
-                                 real end-to-end proxy/CLI spawns + a live scan of the actual host
+                                 real end-to-end proxy/exec/CLI process spawns + a live scan
 ```
 
-## Phase 3
+## DevDay demo flow
 
-Not built, and intentionally not attempted here — see the brief's own
-explicit "do not build yet" list (LLM-based intent detection, ML anomaly
-detection, full EDR, kernel-level monitoring, packet inspection, a cloud
-backend, auth/SSO, Kubernetes, a complex dashboard, automated remediation,
-automatic secret rotation). Concretely next, in rough priority order:
+`npm run demo` runs all five steps for real, against real code — nothing
+simulated, no real secrets, no real destructive commands (the MCP server is
+a fixture that never touches the real filesystem/network; the demo's `curl`
+exfil attempt is BLOCKed before AgentGuard ever calls `spawn()` on it):
 
-- **Shell and filesystem adapters** that produce real (non-MCP) `Action`s
-  and feed the same `PolicyEngine`/`RiskEngine` — the abstraction exists,
-  the event sources don't yet.
-- **Real network enforcement** via an OS-level proxy, rather than
-  best-effort URL-argument inspection.
-- **HTTP/SSE MCP transport** support.
-- **Response inspection** (catching secrets flowing back to the agent, not
-  just outbound in arguments).
-- **Actual event correlation logic** on top of the foundation now in place
-  (e.g. flagging a `.env` read followed by an external network call in the
-  same session) — explicitly *not* full DLP, just pattern-of-events rules.
-- **A real agent identity** distinct from `sessionId`, so the same agent's
-  behavior can be tracked across multiple gateway runs.
-- Anomaly detection, LLM-assisted risk evaluation, a dashboard — all still
-  deliberately deferred; this stays deterministic and explainable.
+1. **`agentguard scan`** — posture snapshot of the actual machine running
+   the demo (finds whatever AI tooling/MCP configs/sensitive paths really
+   exist there).
+2. **Policy sweep** — 7 quick scenarios through the real gateway (normal
+   read, `.env`, `~/.ssh`, `~/.aws/credentials`, an allowed shell command, a
+   disallowed one, an untrusted server) exercising every policy branch.
+3. **Attack-chain narrative**, one gateway session against a *trusted*
+   server: (1) a normal source lookup → ALLOW; (2) a tool response
+   containing an injected instruction → response inspection WARNs; (3) the
+   agent probes `.env` → WARN; (4) the agent attempts `~/.ssh/id_rsa` →
+   BLOCK; (5) the agent attempts an external network call → WARN.
+4. **`agentguard exec`** — the agent falls back to a raw `curl` exfil
+   attempt; BLOCKed before it is ever spawned, not just observed after the
+   fact.
+5. **`agentguard events`** — the attack-chain session's full audit trail,
+   plus the correlation engine firing "Potential sensitive-data exposure
+   pattern" (HIGH) on steps 3+5, printed with severity, session, agent, and
+   recommendation. The separate `agentguard exec` BLOCK from step 4 appears
+   as its own session — a live, honest illustration of the
+   doesn't-span-adapters correlation limitation, not something hidden from
+   the demo.
+
+## Phase 4
+
+Not built, and intentionally not attempted here:
+
+- **HTTP/SSE MCP transport** — deferred by explicit agreement: real
+  Streamable-HTTP/SSE support is separate transport plumbing (likely via the
+  official `@modelcontextprotocol/sdk`, to avoid hand-rolling a networking
+  stack) and shouldn't distract from the runtime-security story.
+- **Filesystem/network adapters** producing real (non-MCP, non-exec)
+  `Action`s — e.g. an fs-watcher — feeding the same `PolicyEngine`.
+- **Real OS-level network enforcement** via a proxy, rather than
+  best-effort URL-argument/response inspection.
+- **Cross-adapter session identity** so a gateway session and an
+  `agentguard exec` run by the same agent correlate as one — needs a real
+  identity mechanism beyond MCP's `clientInfo`.
+- **Richer correlation**: more rules, cross-session correlation, and
+  eventually — explicitly not yet — anomaly detection or LLM-assisted risk
+  evaluation, still deliberately deferred so this stays deterministic and
+  explainable.
+- A dashboard, automated remediation, secret rotation — all still out of
+  scope per the project's own non-goals.

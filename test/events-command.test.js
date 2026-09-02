@@ -49,6 +49,43 @@ test('formatEvents --session filters to just that session', () => {
   assert.ok(output.includes('Session s2'));
 });
 
+test('--risk filters displayed events but a pattern spanning multiple risk levels is still detected', () => {
+  const events = [
+    {
+      sessionId: 's1', agentId: 'agent-x', decision: 'WARN', risk: 'MEDIUM', timestamp: '2026-01-01T00:00:01.000Z',
+      toolName: 'read_file', resource: 'mcp-server:mystery-server', reason: '', actionType: 'MCP_TOOL_CALL',
+      rule: 'mcp.allowed_servers', serverName: 'mystery-server',
+    },
+    {
+      sessionId: 's1', agentId: 'agent-x', decision: 'WARN', risk: 'HIGH', timestamp: '2026-01-01T00:00:02.000Z',
+      toolName: 'read_file', resource: 'filesystem:.env', reason: '', actionType: 'FILE_READ',
+    },
+    {
+      sessionId: 's1', agentId: 'agent-x', decision: 'ALLOW', risk: 'LOW', timestamp: '2026-01-01T00:00:03.000Z',
+      toolName: 'fetch', resource: 'network:evil.example.com', destination: 'evil.example.com', reason: '', actionType: 'NETWORK_REQUEST',
+    },
+  ];
+
+  // Filtering the *display* to only HIGH-risk events must not suppress the
+  // escalation detection, which depends on the MEDIUM-risk first step too.
+  const output = formatEvents(events, { risk: 'HIGH' });
+  assert.match(output, /Potential agent compromise pattern detected/);
+  assert.match(output, /Agent: agent-x/);
+  // And the display itself really was filtered: only the HIGH-risk line shows.
+  assert.ok(!output.includes('mcp-server:mystery-server'));
+  assert.match(output, /filesystem:\.env/);
+});
+
+test('--blocked shows only BLOCK-decision events', () => {
+  const events = [
+    { sessionId: 's1', decision: 'ALLOW', risk: 'LOW', timestamp: '2026-01-01T00:00:01.000Z', toolName: 't1', resource: 'r1', reason: '' },
+    { sessionId: 's1', decision: 'BLOCK', risk: 'CRITICAL', timestamp: '2026-01-01T00:00:02.000Z', toolName: 't2', resource: 'r2', reason: 'nope' },
+  ];
+  const output = formatEvents(events, { blockedOnly: true });
+  assert.ok(!output.includes('r1'));
+  assert.match(output, /r2/);
+});
+
 test('end-to-end: readEvents + formatEvents over a real temp log file', () => {
   const file = tempLogFile([
     { sessionId: 'abc', decision: 'WARN', risk: 'HIGH', timestamp: '2026-01-01T00:00:00.000Z', toolName: 'read_file', resource: 'filesystem:.env', reason: 'watched pattern' },

@@ -37,6 +37,24 @@ test('agentguard events reads a real log file end-to-end', async () => {
   fs.unlinkSync(file);
 });
 
+test('agentguard exec allows and runs a permitted command', async () => {
+  const POLICY = path.join(repoRoot, 'test', 'fixtures', 'test-policy.yaml');
+  const { stdout } = await execFileAsync(process.execPath, [CLI, 'exec', '--policy', POLICY, '--', 'git', '--version']);
+  assert.match(stdout, /git version/i);
+});
+
+test('agentguard exec blocks a denied command with a non-zero exit and no output from the command itself', async () => {
+  const POLICY = path.join(repoRoot, 'test', 'fixtures', 'test-policy.yaml');
+  await assert.rejects(
+    execFileAsync(process.execPath, [CLI, 'exec', '--policy', POLICY, '--', 'rm', '-rf', '/tmp/should-never-run']),
+    (err) => {
+      assert.notEqual(err.code, 0);
+      assert.match(err.stderr, /BLOCKED by AgentGuard policy/);
+      return true;
+    }
+  );
+});
+
 test('agentguard with no subcommand prints usage and exits 0', async () => {
   const { stderr } = await execFileAsync(process.execPath, [CLI]);
   assert.match(stderr, /Usage: agentguard/);

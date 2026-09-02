@@ -1,6 +1,7 @@
-# Same as policy/default-policy.yaml, but with mcp.allowed_servers populated
-# so the demo can actually show the WARN-on-untrusted-server case (the
-# shipped default leaves that list empty — see its comments for why).
+# Same as policy/default-policy.yaml, but with mcp.allowed_servers and
+# network.allowed_domains populated so the demo can show the WARN-on-
+# untrusted-server and WARN-on-unlisted-domain cases (the shipped default
+# leaves both empty — see their comments for why).
 filesystem:
   allow: []
   deny:
@@ -16,13 +17,20 @@ shell:
     - git
     - npm
     - node
+  deny:
+    - rm
 
 mcp:
   allowed_servers:
     - trusted-server
 
 network:
-  allowed_domains: []
+  allowed_domains:
+    - github.com
 
 secrets:
   block_exfiltration: true
+
+mcp_response_inspection:
+  block_on_secret_pattern: true
+  block_on_suspicious_instruction: false

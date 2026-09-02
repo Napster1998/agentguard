@@ -8,17 +8,28 @@ import { assessRisk } from './risk-engine.js';
  * crashes the engine. Documented defaults:
  *  - filesystem.allow empty  -> no allowlist restriction (deny/warn still apply)
  *  - shell.allowed empty     -> ALL shell-tool commands are blocked (secure by default)
+ *  - shell.deny              -> checked BEFORE shell.allowed and always wins,
+ *                                even for a binary also present in shell.allowed
  *  - mcp.allowed_servers empty -> all MCP servers are trusted (no reputation data yet)
  *  - network.allowed_domains empty -> no domain restriction (best-effort visibility only)
  *  - secrets.block_exfiltration defaults to true
+ *  - mcp_response_inspection.block_on_secret_pattern defaults to true (mirrors
+ *    the request-side default); block_on_suspicious_instruction defaults to
+ *    false (log-only — pattern-matching a response is a detection signal,
+ *    not proof, so blocking on it is opt-in)
  */
 export function applyDefaults(raw = {}) {
   return {
     filesystem: { allow: [], deny: [], warn: [], ...raw.filesystem },
-    shell: { allowed: [], ...raw.shell },
+    shell: { allowed: [], deny: [], ...raw.shell },
     mcp: { allowed_servers: [], ...raw.mcp },
     network: { allowed_domains: [], ...raw.network },
     secrets: { block_exfiltration: true, ...raw.secrets },
+    mcp_response_inspection: {
+      block_on_secret_pattern: true,
+      block_on_suspicious_instruction: false,
+      ...raw.mcp_response_inspection,
+    },
   };
 }
 
@@ -97,7 +108,17 @@ export class PolicyEngine {
 
   #evaluateShell(action) {
     const { value: binary } = action.resource;
-    const { allowed } = this.policy.shell;
+    const { allowed, deny } = this.policy.shell;
+
+    if (deny.some((d) => d.toLowerCase() === binary.toLowerCase())) {
+      const verdict = VERDICT.BLOCK;
+      return makeDecision({
+        verdict,
+        reason: `Command "${binary}" is explicitly denied by shell.deny.`,
+        risk: assessRisk({ sensitivity: RISK.HIGH, verdict }),
+        rule: 'shell.deny',
+      });
+    }
 
     if (allowed.some((a) => a.toLowerCase() === binary.toLowerCase())) {
       const verdict = VERDICT.ALLOW;

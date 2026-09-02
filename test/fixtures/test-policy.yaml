@@ -12,6 +12,8 @@ shell:
   allowed:
     - git
     - npm
+  deny:
+    - rm
 
 mcp:
   allowed_servers:
