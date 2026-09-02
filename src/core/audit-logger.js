@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { colorDecision, colorRisk } from './colors.js';
 
 /**
  * Writes one JSONL record per decision (for machine consumption / future
@@ -25,11 +26,13 @@ export class AuditLogger {
   }
 
   #printHuman(event) {
-    const prefix = `[${event.decision}]`;
+    const label = colorDecision(event.decision);
+    const prefix = `[${label}]`;
     process.stderr.write(`${prefix} MCP request received\n`);
     if (event.toolName) process.stderr.write(`${prefix} Tool: ${event.toolName}\n`);
     if (event.resource) process.stderr.write(`${prefix} Target: ${event.resource}\n`);
-    process.stderr.write(`${prefix} Policy decision: ${event.decision}\n`);
+    process.stderr.write(`${prefix} Policy decision: ${label}\n`);
+    if (event.risk) process.stderr.write(`${prefix} Risk: ${colorRisk(event.risk)}\n`);
     if (event.decision !== 'ALLOW' && event.reason) {
       process.stderr.write(`${prefix} Reason: ${event.reason}\n`);
     }

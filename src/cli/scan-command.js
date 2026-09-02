@@ -3,6 +3,7 @@ import yaml from 'js-yaml';
 
 import { runScan } from '../adapters/discovery/scan.js';
 import { applyDefaults } from '../core/policy-engine.js';
+import { colorSeverity, bold } from '../core/colors.js';
 
 const RULE = '─'.repeat(40);
 
@@ -46,7 +47,7 @@ export function formatScanReport(posture) {
   if (posture.findings.length > 0) {
     lines.push('');
     for (const f of posture.findings) {
-      lines.push(`${severityIcon(f.severity)} [${f.id}] ${f.title}`);
+      lines.push(`${severityIcon(f.severity)} [${f.id}] ${f.title} (${colorSeverity(f.severity)})`);
     }
   }
 
@@ -61,15 +62,19 @@ export function formatScanReport(posture) {
   }
 
   lines.push('');
-  lines.push('Security Posture');
+  lines.push(bold('Security Posture'));
   lines.push(RULE);
   lines.push('');
   for (const sev of ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']) {
-    lines.push(`${sev.padEnd(10)} ${posture.severityCounts[sev]}`);
+    // Pad using the PLAIN label's length, then color it - padding an
+    // already-colored string would count invisible ANSI escape bytes as
+    // visual width and misalign the columns.
+    const padding = ' '.repeat(Math.max(1, 10 - sev.length));
+    lines.push(`${colorSeverity(sev)}${padding}${posture.severityCounts[sev]}`);
   }
   lines.push('');
   lines.push(`Score:   ${posture.score}/100`);
-  lines.push(`Overall: ${posture.overallRisk}`);
+  lines.push(`Overall: ${bold(posture.overallRisk)}`);
 
   return lines.join('\n');
 }

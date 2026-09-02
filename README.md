@@ -1,4 +1,4 @@
-# AgentGuard — Local AI Agent Security Gateway (Phase 1 + 2 + 3 POC)
+# AgentGuard — Local AI Agent Security Gateway (DevDay POC)
 
 > **This is a DevDay proof-of-concept, not a production EDR or a complete AI
 > security platform.** It demonstrates a real, working security control: a
@@ -7,7 +7,7 @@
 > deterministic correlation engine that flags risky *patterns* of behavior
 > across a session. Everything still out of scope — full EDR, anomaly/ML
 > detection, a web dashboard, kernel-level monitoring — is listed honestly in
-> [Limitations](#limitations) and [Phase 4](#phase-4).
+> [Limitations](#limitations) and [Future Work](#future-work).
 >
 > **This project has been red-teamed against its own claims, not just unit
 > tested.** [SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md) documents nine
@@ -15,6 +15,45 @@
 > fixed (with permanent regression tests) and one narrowed with the residual
 > gap stated plainly rather than glossed over. Read it before trusting any
 > claim in this README.
+
+**What is it?** A lightweight runtime security gateway for AI agents
+running on developer machines.
+
+**Why does it exist?** AI agents increasingly have access to source code,
+credentials, MCP tools, and local system capabilities — the same trust
+traditional AppSec already knows how to reason about, just applied to a
+new kind of caller:
+
+```
+Traditional application security:          Agent security:
+
+User                                        Agent
+ ↓                                           ↓
+Application                                 Tools / MCP / local capabilities
+ ↓                                           ↓
+Security Controls                           Security Controls
+```
+
+**What does it do?** DISCOVER what's on the machine → ASSESS the risk that
+represents → OBSERVE what an agent actually does → EVALUATE it against
+policy → ENFORCE the boundary (before the action happens, not after) →
+CORRELATE the sequence → EXPLAIN the decision. Least privilege, policy
+enforcement, risk assessment, input inspection, runtime controls,
+auditability — applied to agent activity instead of application traffic.
+
+**How do I see it?**
+```bash
+npm install
+npm run demo
+```
+That's the whole setup — no external services, no real credentials, safe
+to run repeatedly. See [docs/DEV-DAY-DEMO.md](docs/DEV-DAY-DEMO.md) for a
+narrated walkthrough and [docs/architecture.md](docs/architecture.md) for
+the diagram.
+
+**AgentGuard is not an AI detector.** It doesn't try to determine whether
+an agent is malicious — it establishes explicit boundaries around what an
+agent is allowed to do, and enforces them.
 
 ## The problem
 
@@ -263,6 +302,19 @@ the same way a corporate HTTP proxy only sees traffic actually sent to it —
 not a gap introduced by an implementation shortcut, and not something this
 project claims to solve.
 
+**Asset-by-asset summary** (full detail in the numbered list below and in
+[SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md)):
+
+| Asset | Threat | Attack path | AgentGuard control | Residual risk |
+|---|---|---|---|---|
+| Source code / repos | Excessive read/write access | Agent reads/writes outside its intended workspace | `filesystem.allow` scoping (both adapters) | No symlink resolution; a workspace escape via a symlink isn't caught |
+| Credentials (SSH keys, `.env`, cloud config) | Exposure or exfiltration | Agent reads a credential path, directly or via traversal | `filesystem.deny`/`warn` + traversal collapsing (F4) + `agentguard scan` standing-exposure check | Still lexical matching, not full canonicalization |
+| MCP servers | Untrusted/malicious server | An unlisted or spoofable server is invoked | `mcp.allowed_servers` + posture discovery + response inspection | `serverName` has no cryptographic binding to what's actually spawned — an operator-trust question |
+| Developer workstation (shell) | Dangerous/arbitrary execution | A denied command, or an allowed interpreter given arbitrary code via `-e`/`-c` | `shell.allowed`/`deny` (basename-normalized, F3) + `shell.block_interpreter_eval` (F2) | Interpreter mitigation is narrow — doesn't stop a payload written to a file first |
+| External destinations | Data exfiltration | A tool call or shell command reaches an unexpected domain | `network.allowed_domains` (best-effort) + correlation (sensitive-read-then-network) | No raw socket visibility — only URLs visible in MCP arguments |
+| Malicious/untrusted tool responses | Instruction injection, secret leakage in a response | A tool response contains an injected instruction or a credential | MCP response inspection (secret pattern BLOCK, instruction pattern WARN) | Pattern-based only — rephrased injection or a response shape without a `text` key evades it (F5) |
+| The gateway itself (bypass) | Agent routes around AgentGuard entirely | MCP client configured to talk to the real server directly; command run outside `agentguard exec` | None — architectural, not a bug | Not a mandatory chokepoint; see above |
+
 1. **Prompt injection** — malicious content manipulates the agent into
    attempting an unintended action. AgentGuard does not detect the injection
    itself (it cannot see the agent's reasoning) — but MCP response
@@ -311,6 +363,21 @@ command or MCP call that bypasses AgentGuard's entry points entirely
 attacks on filesystem paths; anything happening inside a real MCP
 server/subprocess's own internals; true model intent (we observe actions and
 their sequence, never reasoning).
+
+## Security claims matrix
+
+| Protects against | | Does not protect against |
+|---|---|---|
+| Prohibited MCP tool calls (routed through the gateway) | ✓ | Agents bypassing the gateway entirely | ✗ |
+| Prohibited commands routed through `agentguard exec` | ✓ | Commands executed outside `agentguard exec` | ✗ |
+| Known sensitive-resource patterns (paths, secret shapes) | ✓ | Host-wide filesystem/process activity | ✗ |
+| Selected dangerous shell operations, incl. the interpreter-eval bypass | ✓ *(narrowed, see F2)* | Arbitrary OS-level process activity | ✗ |
+| Selected suspicious MCP responses (secrets, injection-shaped text) | ✓ *(pattern-based, see F5)* | Unknown/semantic prompt injection | ✗ |
+| Known correlated action sequences, within one session | ✓ | Cross-session / cross-adapter behavioral correlation | ✗ |
+| Local AI/MCP posture discovery | ✓ | Tampered audit logs (observability, not forensic-grade) | ✗ |
+
+Full detail, worked examples, and the reasoning behind each row:
+[SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md#security-claims-matrix).
 
 ## Current capabilities
 
@@ -536,48 +603,46 @@ src/adapters/discovery/       agent detection, MCP config discovery, network exp
 src/cli/                      gateway-command, scan-command, events-command, exec-command
 
 policy/default-policy.yaml    shipped reference policy
-examples/                     the DevDay demo (scan -> policy sweep -> attack chain ->
-                                 exec block -> events+correlation) + its policy
+examples/                     the DevDay demo — the 7-Act narrative (docs/DEV-DAY-DEMO.md) + its policy
 test/                         unit tests (dependency-injected, no reliance on host state) +
                                  real end-to-end proxy/exec/CLI process spawns + a live scan
 test/security-validation/     red-team reproduction tests, one per finding in
                                  SECURITY-ASSESSMENT.md — asserts the FIXED behavior;
                                  a regression here means a bypass came back
 
-SECURITY-ASSESSMENT.md        Phase 3.5 adversarial self-assessment: findings, fixes,
+SECURITY-ASSESSMENT.md        adversarial self-assessment: findings, fixes,
                                  residual risk, security claims matrix
+docs/architecture.md          the architecture diagram, enforcement boundaries vs. trust boundary
+docs/DEV-DAY-DEMO.md          timed presenter script for npm run demo
+docs/DEV-DAY-QA.md            prepared answers to likely judge questions
 ```
 
 ## DevDay demo flow
 
-`npm run demo` runs all five steps for real, against real code — nothing
+`npm run demo` runs a 7-Act narrative for real, against real code — nothing
 simulated, no real secrets, no real destructive commands (the MCP server is
-a fixture that never touches the real filesystem/network; the demo's `curl`
-exfil attempt is BLOCKed before AgentGuard ever calls `spawn()` on it):
+a fixture that never touches the real filesystem/network; the `curl` exfil
+attempt in Act 6 is BLOCKed before AgentGuard ever calls `spawn()` on it).
+See [docs/DEV-DAY-DEMO.md](docs/DEV-DAY-DEMO.md) for the full narrated
+timing script; in short:
 
-1. **`agentguard scan`** — posture snapshot of the actual machine running
-   the demo (finds whatever AI tooling/MCP configs/sensitive paths really
-   exist there).
-2. **Policy sweep** — 7 quick scenarios through the real gateway (normal
-   read, `.env`, `~/.ssh`, `~/.aws/credentials`, an allowed shell command, a
-   disallowed one, an untrusted server) exercising every policy branch.
-3. **Attack-chain narrative**, one gateway session against a *trusted*
-   server: (1) a normal source lookup → ALLOW; (2) a tool response
-   containing an injected instruction → response inspection WARNs; (3) the
-   agent probes `.env` → WARN; (4) the agent attempts `~/.ssh/id_rsa` →
-   BLOCK; (5) the agent attempts an external network call → WARN.
-4. **`agentguard exec`** — the agent falls back to a raw `curl` exfil
-   attempt; BLOCKed before it is ever spawned, not just observed after the
-   fact.
-5. **`agentguard events`** — the attack-chain session's full audit trail,
-   plus the correlation engine firing "Potential sensitive-data exposure
-   pattern" (HIGH) on steps 3+5, printed with severity, session, agent, and
-   recommendation. The separate `agentguard exec` BLOCK from step 4 appears
-   as its own session — a live, honest illustration of the
-   doesn't-span-adapters correlation limitation, not something hidden from
-   the demo.
+1. **The Problem** — printed framing, no code runs yet.
+2. **Discover** (`agentguard scan`) — posture snapshot of the actual
+   machine running the demo.
+3. **Normal agent activity** — a plain file read → ALLOW, LOW risk.
+4. **Suspicious response** — the fixture server's reply contains an
+   instruction-injection-*shaped* phrase → response inspection WARNs.
+5. **Sensitive resource** — `.env` → WARN, then `~/.ssh/id_rsa` → **BLOCK**
+   (the real MCP server never receives that request).
+6. **Dangerous execution** (`agentguard exec`) — a raw `curl` exfiltration
+   attempt, BLOCKed *before* `spawn()` is ever called.
+7. **Correlation** (`agentguard events`) — the full session timeline, plus
+   the correlation engine firing "Potential sensitive-data exposure
+   pattern" (HIGH). Act 6's BLOCK appears as its own, separate session — a
+   live, honest illustration of the doesn't-span-adapters correlation
+   limitation, printed explicitly at the end rather than hidden.
 
-## Phase 4
+## Future Work
 
 Not built, and intentionally not attempted here:
 

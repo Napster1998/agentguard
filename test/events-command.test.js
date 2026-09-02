@@ -21,6 +21,7 @@ test('readEvents skips malformed lines instead of throwing', () => {
   const events = readEvents(file);
   assert.equal(events.length, 1);
   assert.equal(events[0].sessionId, 's1');
+  fs.unlinkSync(file);
 });
 
 test('formatEvents groups events by sessionId and orders by timestamp', () => {
@@ -93,6 +94,8 @@ test('end-to-end: readEvents + formatEvents over a real temp log file', () => {
   const events = readEvents(file);
   const output = formatEvents(events);
   assert.match(output, /Session abc/);
-  assert.match(output, /\[WARN\]/);
+  assert.match(output, /WARN/);
+  assert.match(output, /HIGH/);
+  assert.match(output, /00:00:00/);
   fs.unlinkSync(file);
 });

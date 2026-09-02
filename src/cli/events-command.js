@@ -1,7 +1,22 @@
 import fs from 'node:fs';
 import { correlate } from '../core/correlation-engine.js';
+import { colorDecision, colorRisk, bold } from '../core/colors.js';
 
 const RULE = '─'.repeat(40);
+const DECISION_WIDTH = 6;
+const RISK_WIDTH = 9;
+
+function formatTime(ts) {
+  const m = /T(\d{2}:\d{2}:\d{2})/.exec(ts || '');
+  return m ? m[1] : '--:--:--';
+}
+
+/** Colors `text`, padding to `width` using the PLAIN length — padding an
+ * already-colored string would count invisible ANSI bytes as visual width. */
+function padColor(text, width, colorFn) {
+  const plain = text || '';
+  return colorFn(plain) + ' '.repeat(Math.max(1, width - plain.length));
+}
 
 function parseArgs(argv) {
   const opts = { logFile: null, sessionId: null, risk: null, blockedOnly: false };
@@ -71,18 +86,22 @@ export function formatEvents(events, { sessionId, risk, blockedOnly } = {}) {
     const detections = correlate(sessionEvents, sid);
     if (displayed.length === 0 && detections.length === 0) continue;
 
-    lines.push(`Session ${sid}`);
+    lines.push(bold(`Session ${sid}`));
     lines.push(RULE);
     for (const e of displayed) {
-      lines.push(`[${e.decision}] ${e.timestamp}  ${e.toolName || e.method || ''}  ${e.resource || ''} (risk: ${e.risk})`);
+      const time = formatTime(e.timestamp);
+      const decision = padColor(e.decision, DECISION_WIDTH, colorDecision);
+      const risk = padColor(e.risk, RISK_WIDTH, colorRisk);
+      const label = e.toolName || e.method || '';
+      lines.push(`${time}  ${decision}${risk}${label}  ${e.resource || ''}`.trimEnd());
       if (e.decision !== 'ALLOW') lines.push(`  reason: ${e.reason}`);
     }
 
     for (const d of detections) {
       const agentIds = [...new Set(sessionEvents.map((e) => e.agentId).filter(Boolean))];
       lines.push('');
-      lines.push(`Detection: ${d.title}`);
-      lines.push(`Severity: ${d.severity}`);
+      lines.push(bold(`Detection: ${d.title}`));
+      lines.push(`Severity: ${colorRisk(d.severity)}`);
       lines.push(`Session: ${sid}`);
       lines.push(`Agent: ${agentIds.join(', ') || 'unknown'}`);
       lines.push(d.description);
