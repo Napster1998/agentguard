@@ -58,3 +58,46 @@ export function findSecretMatches(value) {
 export function findSuspiciousInstructionMatch(value) {
   return SUSPICIOUS_INSTRUCTION_PATTERNS.find((re) => re.test(value)) || null;
 }
+
+/**
+ * shell.allowed only ever inspects the top-level binary — it has no
+ * visibility into what a general-purpose interpreter is INSTRUCTED to do.
+ * `node -e "<anything>"` runs arbitrary code, and "node" being allowed
+ * gives that code the same trust as any other allowed command. This is a
+ * narrow, deliberately incomplete mitigation for the single most blatant
+ * case (a well-known interpreter + its inline-eval flag) — see
+ * SECURITY-ASSESSMENT.md F2. It does NOT catch: writing a script to a file
+ * and running that, `require()`/`import()` tricks, or any interpreter not
+ * in this small table. Treat this as raising the bar, not closing the gap.
+ */
+const INTERPRETER_EVAL_FLAGS = {
+  node: ['-e', '--eval'],
+  nodejs: ['-e', '--eval'],
+  python: ['-c'],
+  python3: ['-c'],
+  ruby: ['-e'],
+  perl: ['-e'],
+  sh: ['-c'],
+  bash: ['-c'],
+  zsh: ['-c'],
+  ksh: ['-c'],
+  cmd: ['/c', '/k'],
+  powershell: ['-command', '-c'],
+  pwsh: ['-command', '-c'],
+};
+
+function normalizeInterpreterName(binary) {
+  return binary
+    .replace(/\\/g, '/')
+    .split('/')
+    .pop()
+    .toLowerCase()
+    .replace(/\.(exe|cmd|bat|com|ps1)$/i, '');
+}
+
+/** @param {string} binary  @param {string[]} args */
+export function isInterpreterEvalAttempt(binary, args) {
+  const flags = INTERPRETER_EVAL_FLAGS[normalizeInterpreterName(binary)];
+  if (!flags) return false;
+  return args.some((a) => typeof a === 'string' && flags.includes(a.toLowerCase()));
+}

@@ -2,8 +2,13 @@ import { listListeningPorts as defaultListListeningPorts } from '../host/listeni
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
 
+/** Windows' netstat brackets IPv6 addresses ("[::1]"); strip that before
+ * comparing so a genuinely local-only IPv6 service isn't misclassified as
+ * externally bound (a false positive, not a bypass — still a real
+ * correctness bug worth fixing). */
 function isExternallyBound(host) {
-  return !LOCAL_HOSTS.has(host);
+  const stripped = host.replace(/^\[|\]$/g, '');
+  return !LOCAL_HOSTS.has(stripped);
 }
 
 /**

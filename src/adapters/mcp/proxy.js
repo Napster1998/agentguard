@@ -52,10 +52,25 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
     let message;
     try {
       message = JSON.parse(line);
-    } catch {
-      // Not valid JSON-RPC. Fail safe by forwarding rather than silently
-      // dropping bytes, which could hang the agent on a malformed line.
-      child.stdin.write(line + '\n');
+    } catch (err) {
+      // SECURITY: a line we cannot parse is a line we cannot evaluate, and
+      // a security gateway must never let "cannot evaluate" silently mean
+      // "forward anyway" (that is an unconditional ALLOW with zero policy
+      // applied). Fail CLOSED: drop it rather than relay it to the real
+      // server. The agent's request will time out instead of succeeding
+      // unevaluated — the correct trade-off for a security boundary.
+      logger.log(
+        createSecurityEvent({
+          sessionId,
+          agentId,
+          source: 'mcp',
+          direction: 'request',
+          decision: VERDICT.BLOCK,
+          risk: RISK.HIGH,
+          rule: 'malformed-json',
+          reason: `Line could not be parsed as JSON-RPC and was dropped rather than forwarded unevaluated: ${err.message}`,
+        })
+      );
       return;
     }
 
@@ -136,15 +151,34 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
     let message;
     try {
       message = JSON.parse(line);
-    } catch {
-      stdout.write(line + '\n');
+    } catch (err) {
+      // Same fail-closed reasoning as the request side: a response we
+      // cannot parse is a response we cannot inspect, so it must not reach
+      // the agent uninspected.
+      logger.log(
+        createSecurityEvent({
+          sessionId,
+          agentId,
+          source: 'mcp',
+          direction: 'response',
+          decision: VERDICT.BLOCK,
+          risk: RISK.MEDIUM,
+          rule: 'malformed-json',
+          reason: `Response line could not be parsed as JSON-RPC and was dropped rather than forwarded uninspected: ${err.message}`,
+        })
+      );
       return;
     }
 
+    // Inspect any response carrying a `result`, tracked or not: a second
+    // response reusing an already-consumed id, or an unsolicited response
+    // with a fabricated id, must not skip inspection just because it isn't
+    // (or is no longer) in pendingRequests — that would let a malicious/
+    // compromised downstream server bypass response inspection entirely.
     const pending = message.id !== undefined ? pendingRequests.get(message.id) : undefined;
     if (pending) pendingRequests.delete(message.id);
 
-    if (!pending || message.result === undefined) {
+    if (message.result === undefined) {
       stdout.write(line + '\n');
       return;
     }
@@ -184,7 +218,7 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
       source: 'mcp',
       direction: 'response',
       actionType: null,
-      toolName: pending.toolName,
+      toolName: pending?.toolName ?? null,
       serverName,
       resource: null,
       decision: verdict,

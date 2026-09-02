@@ -1,7 +1,48 @@
 import os from 'node:os';
 
 function normalize(p) {
-  return p.replace(/\\/g, '/');
+  return collapseDotSegments(p.replace(/\\/g, '/'));
+}
+
+/**
+ * Lexically collapses `.` and `..` path segments (e.g.
+ * "./workspace/../../etc/passwd" -> "../etc/passwd"), WITHOUT touching the
+ * real filesystem — no symlink resolution, no existence check. This closes
+ * the traversal bypass where a value lexically matched an allow/deny
+ * pattern's prefix while actually resolving somewhere else entirely (see
+ * README "Limitations" — this is still not full canonicalization).
+ */
+function collapseDotSegments(p) {
+  const isAbsolute = p.startsWith('/');
+  const parts = p.split('/');
+  const out = [];
+  for (const part of parts) {
+    if (part === '.' || part === '') continue;
+    if (part === '..') {
+      const top = out[out.length - 1];
+      // `~` is a fixed anchor (the home directory), not a poppable segment
+      // like a real directory name — excess ".." past it clamps at the
+      // anchor instead of discarding it (matching how ".." past a real
+      // filesystem root clamps at root rather than going negative).
+      if (out.length > 0 && top !== '..' && top !== '~') {
+        out.pop();
+      } else if (!isAbsolute && top !== '~') {
+        out.push('..');
+      }
+      continue;
+    }
+    out.push(part);
+  }
+  const collapsed = out.join('/');
+  const prefix = isAbsolute ? '/' : '';
+  // Preserve a leading "./" for a purely relative, non-traversing path so
+  // "./workspace/**"-style patterns still line up visually with input like
+  // "./workspace/x" (functionally harmless either way since matching is
+  // prefix-based, but keeps evidence/log output readable).
+  if (!isAbsolute && p.startsWith('./') && !collapsed.startsWith('..')) {
+    return './' + collapsed;
+  }
+  return prefix + collapsed;
 }
 
 /** Converts a restricted glob subset (`*`, `**`, literal chars) to a regex source. */

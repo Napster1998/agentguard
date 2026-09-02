@@ -7,7 +7,7 @@ import { combineDecisions, VERDICT } from '../../core/decision.js';
 import { RISK } from '../../core/risk.js';
 import { createAction } from '../../core/action.js';
 import { createSecurityEvent } from '../../core/security-event.js';
-import { looksLikePath, findSecretMatches } from '../../core/resource-heuristics.js';
+import { looksLikePath, findSecretMatches, isInterpreterEvalAttempt } from '../../core/resource-heuristics.js';
 
 const NO_ACTION_DECISION = { verdict: VERDICT.ALLOW, reason: 'No resources required policy evaluation.', risk: RISK.NONE, rule: null };
 
@@ -20,6 +20,17 @@ const NO_ACTION_DECISION = { verdict: VERDICT.ALLOW, reason: 'No resources requi
 function execArgsToActions(command, args, context) {
   const baseContext = { ...context, toolName: command, method: 'shell.exec' };
   const actions = [createAction({ verb: 'execute', resourceType: 'shell', resourceValue: command, context: baseContext })];
+
+  if (isInterpreterEvalAttempt(command, args)) {
+    actions.push(
+      createAction({
+        verb: 'execute',
+        resourceType: 'interpreter-eval',
+        resourceValue: `${command} ${args.join(' ')}`,
+        context: baseContext,
+      })
+    );
+  }
 
   for (const arg of args) {
     if (looksLikePath(arg)) {

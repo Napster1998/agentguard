@@ -12,7 +12,7 @@
     "agentguard-gateway": "./bin/agentguard-gateway.js"
   },
   "scripts": {
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --test \"test/**/*.test.js\"",
     "demo": "node examples/run-demo.mjs",
     "scan": "node bin/agentguard.js scan"
   },

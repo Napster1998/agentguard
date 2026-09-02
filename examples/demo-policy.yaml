@@ -16,9 +16,9 @@ shell:
   allowed:
     - git
     - npm
-    - node
   deny:
     - rm
+  block_interpreter_eval: true
 
 mcp:
   allowed_servers:

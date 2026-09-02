@@ -32,11 +32,17 @@ shell:
   # Deny-by-default: only binaries listed here may be invoked through an
   # MCP shell/exec-style tool call, or through `agentguard exec`. An empty
   # allowed list blocks all shell execution.
+  #
+  # Deliberately NOT including general-purpose interpreters (node, python,
+  # sh, powershell, ...) here: shell.allowed only ever inspects the binary
+  # name, so allowing an interpreter effectively allows arbitrary code
+  # execution through it (see SECURITY-ASSESSMENT.md F2). If you add one
+  # back, understand that block_interpreter_eval below only catches the
+  # single most blatant case (an inline -e/-c/-Command flag) — it is not a
+  # general solution.
   allowed:
     - git
     - npm
-    - node
-    - python
 
   # Checked BEFORE `allowed` and always wins, even if a binary also
   # appears in `allowed` — a second layer for the handful of commands
@@ -45,6 +51,14 @@ shell:
     - rm
     - shutdown
     - reboot
+
+  # BLOCKs a known interpreter (node/python/sh/bash/powershell/cmd/...)
+  # invoked with its inline-code flag, even if that interpreter is itself
+  # in shell.allowed — see SECURITY-ASSESSMENT.md F2. Narrow and
+  # deliberately incomplete (does not catch e.g. writing a script to a
+  # file first); set false only if this deployment has already accepted
+  # that risk.
+  block_interpreter_eval: true
 
 mcp:
   # Empty = trust all configured MCP servers (no reputation data in Phase 1).

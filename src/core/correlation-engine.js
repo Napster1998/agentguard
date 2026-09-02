@@ -132,7 +132,9 @@ function detectUntrustedServerThenSensitive(events, sessionId) {
  * @returns {import('./detection.js').Detection[]}
  */
 export function correlate(events, sessionId) {
-  const sorted = [...events].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  // Defensive: a caller-supplied event missing `timestamp` must not crash
+  // this sort (see README/SECURITY-ASSESSMENT F7) — treat it as earliest.
+  const sorted = [...events].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
   return [
     ...detectEscalationPattern(sorted, sessionId),
     ...detectCredentialAccessThenShell(sorted, sessionId),

@@ -15,7 +15,11 @@ function parseArgs(argv) {
 }
 
 /** Reads the JSONL audit log — the audit log IS the event store, see
- * README "Event correlation". Malformed lines are skipped, never thrown. */
+ * README "Event correlation". A malformed line (invalid JSON) is skipped,
+ * never thrown; a valid-JSON event missing required fields (e.g. a
+ * hand-edited or corrupted line lacking `timestamp`) is normalized rather
+ * than left to crash a later `.timestamp.localeCompare()` — one bad line
+ * must not take down the report for every other session in the file. */
 export function readEvents(logFile) {
   if (!fs.existsSync(logFile)) return [];
   return fs
@@ -24,7 +28,8 @@ export function readEvents(logFile) {
     .filter(Boolean)
     .map((line) => {
       try {
-        return JSON.parse(line);
+        const parsed = JSON.parse(line);
+        return typeof parsed === 'object' && parsed !== null ? { timestamp: '', ...parsed } : null;
       } catch {
         return null;
       }
@@ -52,7 +57,10 @@ export function formatEvents(events, { sessionId, risk, blockedOnly } = {}) {
 
   const lines = [];
   for (const [sid, sessionEvents] of bySession) {
-    sessionEvents.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    // Defensive: formatEvents() can be called directly (not just via
+    // readEvents(), which normalizes this) - never let a missing
+    // `timestamp` crash the whole report over one bad line.
+    sessionEvents.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
 
     const displayed = sessionEvents.filter((e) => {
       if (blockedOnly && e.decision !== 'BLOCK') return false;

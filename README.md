@@ -8,6 +8,13 @@
 > across a session. Everything still out of scope — full EDR, anomaly/ML
 > detection, a web dashboard, kernel-level monitoring — is listed honestly in
 > [Limitations](#limitations) and [Phase 4](#phase-4).
+>
+> **This project has been red-teamed against its own claims, not just unit
+> tested.** [SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md) documents nine
+> real bypasses found and reproduced with automated exploits, eight fully
+> fixed (with permanent regression tests) and one narrowed with the residual
+> gap stated plainly rather than glossed over. Read it before trusting any
+> claim in this README.
 
 ## The problem
 
@@ -246,6 +253,16 @@ with unrestricted access) invoking tools through an MCP server over stdio,
 and/or running shell commands routed through `agentguard exec`, on a machine
 the developer controls the policy file and host access for.
 
+**Is AgentGuard a mandatory boundary the agent cannot route around?** No —
+this was explicitly re-verified in [SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md)
+rather than assumed. Neither the gateway nor `agentguard exec` is a kernel-
+level chokepoint: an agent whose MCP client config points at the real server
+directly, or a command run without going through `agentguard exec`, is
+invisible to AgentGuard. This is inherent to a userspace proxy architecture,
+the same way a corporate HTTP proxy only sees traffic actually sent to it —
+not a gap introduced by an implementation shortcut, and not something this
+project claims to solve.
+
 1. **Prompt injection** — malicious content manipulates the agent into
    attempting an unintended action. AgentGuard does not detect the injection
    itself (it cannot see the agent's reasoning) — but MCP response
@@ -259,12 +276,24 @@ the developer controls the policy file and host access for.
 3. **Credential exposure** — `filesystem.deny`/`warn` block/flag credential
    paths at runtime, in both the MCP gateway and `agentguard exec`;
    `agentguard scan` flags their mere presence as a standing exposure.
+   Filesystem matching now lexically collapses `.`/`..` traversal segments
+   before comparing — a value like `~/other/../.ssh/id_rsa` used to evade
+   `filesystem.deny` entirely; see
+   [SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md) F4. This is still not
+   full canonicalization (no symlink resolution).
 4. **Excessive filesystem access** — `filesystem.allow` scopes an agent to a
    workspace; anything outside it WARNs, in both adapters.
 5. **Dangerous shell execution** — `shell.allowed`/`shell.deny`, enforced
    for MCP shell-style tool calls and, now, for any command actually routed
    through `agentguard exec` — with real prevention (never spawned) in the
-   latter case.
+   latter case. `shell.allowed`/`deny` now normalize basename and common
+   Windows extensions before comparing (a bare `rm` entry used to miss
+   `/bin/rm`/`rm.exe`/`RM.EXE`), and a general-purpose interpreter (node/
+   python/sh/powershell/...) invoked with its inline-eval flag is BLOCKed
+   by default even if the interpreter itself is allowed — see
+   [SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md) F2/F3. The interpreter
+   mitigation is narrow and stated as such: it does not stop a payload
+   written to a file first and then run.
 6. **Sensitive data exposure via a chained action** — a single sensitive
    read isn't inherently a violation; the correlation engine flags a
    sensitive read followed by external network activity in the same session
@@ -339,6 +368,25 @@ resulting `Detection`s beneath that session.
   statistical/ML detection — they will miss variants and can, in principle,
   false-positive on an unusual-but-legitimate sequence. A `Detection` is a
   prompt for human review, not a verdict.
+- **An allowed general-purpose interpreter (node/python/sh/powershell/...)
+  is close to unrestricted code execution.** `shell.block_interpreter_eval`
+  (default on) catches only the single most blatant case — a known
+  interpreter plus its inline-eval flag. It does not catch a payload
+  written to a file first and then run, or any interpreter/flag outside its
+  small table. See [SECURITY-ASSESSMENT.md](SECURITY-ASSESSMENT.md) F2 —
+  this is stated as a narrowing, not a fix.
+- **MCP response inspection's cross-fragment check is narrow.** It only
+  reconstructs strings collected under the conventional `text` key, joined
+  with no separator — a deliberately inserted separator between fragments,
+  or a response shape that doesn't use `text`, still evades it (F5).
+- **No recursion-depth limit on nested MCP arguments/responses** — a
+  sufficiently deep (but not circular; JSON itself can't be circular)
+  structure will stack-overflow the request/response walkers. A real,
+  bounded DoS surface, not fixed in this phase.
+- **Filesystem path matching collapses `.`/`..` lexically, but is still not
+  full canonicalization** — no symlink resolution, no filesystem access
+  during matching (F4 closed the traversal-bypass direction, not the
+  broader canonicalization gap).
 
 **Posture scanner:** unchanged from Phase 2 — a small hand-maintained agent
 registry (misses anything not in it), a fixed non-exhaustive list of MCP
@@ -353,9 +401,11 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 98 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 133 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper (all with fake data sources where
-                 # possible) + real end-to-end proxy/exec/CLI process spawns
+                 # possible) + real end-to-end proxy/exec/CLI process spawns, plus 35
+                 # security-validation regression tests (test/security-validation/) —
+                 # see SECURITY-ASSESSMENT.md
 npm run demo    # the full narrative — see "DevDay demo flow" below
 npm run scan    # agentguard scan against THIS machine
 ```
@@ -398,7 +448,11 @@ filesystem:
 
 shell:
   allowed: []    # binaries allowed via an MCP shell-style tool call, or `agentguard exec`
+                 # — normalized to basename with common Windows extensions stripped
   deny: []       # checked FIRST, always wins even over `allowed`
+  block_interpreter_eval: true  # BLOCKs a known interpreter (node/python/sh/powershell/...)
+                 # invoked with its inline-eval flag, even if the interpreter is itself
+                 # allowed — narrow mitigation, see SECURITY-ASSESSMENT.md F2
 
 mcp:
   allowed_servers: []   # empty = trust all; also used by `agentguard scan` for trust labels
@@ -423,6 +477,7 @@ mcp_response_inspection:
 | Invoke a server not in `mcp.allowed_servers` | **WARN** (or ALLOW if empty) | MEDIUM | No server-reputation data; empty = trust everything configured. |
 | Shell command not in `shell.allowed` (MCP or `agentguard exec`) | **BLOCK** | HIGH | Arbitrary shell execution is the highest-leverage action available; deny-by-default. |
 | Shell command in `shell.deny` | **BLOCK**, always | HIGH | Wins even over `shell.allowed` — defense in depth. |
+| A known interpreter (node/python/sh/...) invoked with its inline-eval flag | **BLOCK** | CRITICAL | `shell.allowed` only inspects the binary name; an allowed interpreter otherwise grants arbitrary code execution. Narrow mitigation, not a general fix — see SECURITY-ASSESSMENT.md F2. |
 | A tool-call argument or response matching a known secret pattern | **BLOCK** | CRITICAL | Credential material should never cross this boundary in either direction. |
 | A response matching an instruction-injection pattern | **WARN** by default | MEDIUM | A detection signal, not proof — blocking on keyword-matching alone is opt-in. |
 
@@ -485,6 +540,12 @@ examples/                     the DevDay demo (scan -> policy sweep -> attack ch
                                  exec block -> events+correlation) + its policy
 test/                         unit tests (dependency-injected, no reliance on host state) +
                                  real end-to-end proxy/exec/CLI process spawns + a live scan
+test/security-validation/     red-team reproduction tests, one per finding in
+                                 SECURITY-ASSESSMENT.md — asserts the FIXED behavior;
+                                 a regression here means a bypass came back
+
+SECURITY-ASSESSMENT.md        Phase 3.5 adversarial self-assessment: findings, fixes,
+                                 residual risk, security claims matrix
 ```
 
 ## DevDay demo flow

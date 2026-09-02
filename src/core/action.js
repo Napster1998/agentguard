@@ -3,7 +3,7 @@
  * MCP is one *source* of actions; a future shell/filesystem/network adapter
  * would produce the same shape so the engine never needs to know MCP exists.
  *
- * @typedef {'filesystem'|'shell'|'mcp-server'|'network'|'secret'} ResourceType
+ * @typedef {'filesystem'|'shell'|'mcp-server'|'network'|'secret'|'interpreter-eval'} ResourceType
  *
  * @typedef {Object} Action
  * @property {string} verb                 - e.g. 'read', 'execute', 'invoke', 'transmit'
@@ -27,6 +27,10 @@ export const ActionType = Object.freeze({
   // pattern match against any tool-call argument. Kept distinct rather
   // than forced into the list above.
   SECRET_PATTERN_MATCH: 'SECRET_PATTERN_MATCH',
+  // Same idea: a known interpreter invoked with an inline-eval flag,
+  // detected alongside (not instead of) the ordinary SHELL_EXEC action for
+  // the same call. See SECURITY-ASSESSMENT.md F2.
+  INTERPRETER_EVAL_ATTEMPT: 'INTERPRETER_EVAL_ATTEMPT',
 });
 
 const TYPE_BY_RESOURCE_VERB = {
@@ -36,6 +40,7 @@ const TYPE_BY_RESOURCE_VERB = {
   'shell:execute': ActionType.SHELL_EXEC,
   'network:network': ActionType.NETWORK_REQUEST,
   'secret:transmit': ActionType.SECRET_PATTERN_MATCH,
+  'interpreter-eval:execute': ActionType.INTERPRETER_EVAL_ATTEMPT,
 };
 
 /** @returns {Action} */

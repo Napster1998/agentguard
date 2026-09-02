@@ -3,6 +3,21 @@ import { RISK } from './risk.js';
 import { matchesAny } from './glob-match.js';
 import { assessRisk } from './risk-engine.js';
 
+const EXECUTABLE_EXTENSIONS = /\.(exe|cmd|bat|com|ps1)$/i;
+
+/**
+ * Normalizes a shell binary reference to its basename with a common
+ * Windows executable extension stripped, so `shell.allowed`/`shell.deny`
+ * match "rm", "/bin/rm", "rm.exe", and "RM.EXE" consistently — see
+ * SECURITY-ASSESSMENT.md F3. Both the incoming command AND each policy
+ * list entry are normalized the same way, so a policy author can write
+ * either form.
+ */
+function normalizeBinary(binary) {
+  const basename = binary.replace(/\\/g, '/').split('/').pop() || binary;
+  return basename.toLowerCase().replace(EXECUTABLE_EXTENSIONS, '');
+}
+
 /**
  * Fills in missing policy sections so a partial/minimal policy file never
  * crashes the engine. Documented defaults:
@@ -10,6 +25,15 @@ import { assessRisk } from './risk-engine.js';
  *  - shell.allowed empty     -> ALL shell-tool commands are blocked (secure by default)
  *  - shell.deny              -> checked BEFORE shell.allowed and always wins,
  *                                even for a binary also present in shell.allowed
+ *  - shell.block_interpreter_eval defaults to true — BLOCKs a known
+ *                                interpreter (node/python/sh/powershell/...)
+ *                                invoked with an inline-code flag (-e/-c/
+ *                                -Command/...), even if that interpreter is
+ *                                itself in shell.allowed. See F2 in
+ *                                SECURITY-ASSESSMENT.md: shell.allowed only
+ *                                inspects the binary name, so a general-
+ *                                purpose interpreter otherwise grants
+ *                                arbitrary code execution.
  *  - mcp.allowed_servers empty -> all MCP servers are trusted (no reputation data yet)
  *  - network.allowed_domains empty -> no domain restriction (best-effort visibility only)
  *  - secrets.block_exfiltration defaults to true
@@ -21,7 +45,7 @@ import { assessRisk } from './risk-engine.js';
 export function applyDefaults(raw = {}) {
   return {
     filesystem: { allow: [], deny: [], warn: [], ...raw.filesystem },
-    shell: { allowed: [], deny: [], ...raw.shell },
+    shell: { allowed: [], deny: [], block_interpreter_eval: true, ...raw.shell },
     mcp: { allowed_servers: [], ...raw.mcp },
     network: { allowed_domains: [], ...raw.network },
     secrets: { block_exfiltration: true, ...raw.secrets },
@@ -45,6 +69,8 @@ export class PolicyEngine {
         return this.#evaluateFilesystem(action);
       case 'shell':
         return this.#evaluateShell(action);
+      case 'interpreter-eval':
+        return this.#evaluateInterpreterEval(action);
       case 'mcp-server':
         return this.#evaluateMcpServer(action);
       case 'network':
@@ -52,10 +78,15 @@ export class PolicyEngine {
       case 'secret':
         return this.#evaluateSecret(action);
       default:
+        // Fail SAFE, not open: an unrecognized resource type means "we
+        // don't know how to evaluate this," not "allow it." Not reachable
+        // via any current adapter (all of which only ever produce the
+        // types handled above) — this exists for whatever adapter comes
+        // next, so it can't silently regress to unconditional ALLOW.
         return makeDecision({
-          verdict: VERDICT.ALLOW,
-          reason: 'No policy rule exists for this resource type',
-          risk: assessRisk({ sensitivity: RISK.NONE, verdict: VERDICT.ALLOW }),
+          verdict: VERDICT.WARN,
+          reason: `No policy rule exists for resource type "${action.resource.type}"; flagged rather than silently allowed.`,
+          risk: assessRisk({ sensitivity: RISK.MEDIUM, verdict: VERDICT.WARN }),
           rule: null,
         });
     }
@@ -109,8 +140,9 @@ export class PolicyEngine {
   #evaluateShell(action) {
     const { value: binary } = action.resource;
     const { allowed, deny } = this.policy.shell;
+    const normalizedBinary = normalizeBinary(binary);
 
-    if (deny.some((d) => d.toLowerCase() === binary.toLowerCase())) {
+    if (deny.some((d) => normalizeBinary(d) === normalizedBinary)) {
       const verdict = VERDICT.BLOCK;
       return makeDecision({
         verdict,
@@ -120,7 +152,7 @@ export class PolicyEngine {
       });
     }
 
-    if (allowed.some((a) => a.toLowerCase() === binary.toLowerCase())) {
+    if (allowed.some((a) => normalizeBinary(a) === normalizedBinary)) {
       const verdict = VERDICT.ALLOW;
       return makeDecision({
         verdict,
@@ -136,6 +168,36 @@ export class PolicyEngine {
       reason: `Command "${binary}" is not in the shell.allowed allowlist. Arbitrary shell execution is blocked by default.`,
       risk: assessRisk({ sensitivity: RISK.MEDIUM, verdict }),
       rule: 'shell.allowed',
+    });
+  }
+
+  /**
+   * shell.allowed only ever inspects the top-level binary — an allowed
+   * general-purpose interpreter (node/python/sh/powershell/...) invoked
+   * with an inline-code flag grants arbitrary code execution regardless of
+   * what shell.allowed says. This BLOCKs that specific, narrow pattern by
+   * default, independent of whether the interpreter itself is allowed —
+   * see SECURITY-ASSESSMENT.md F2. Configurable off via
+   * shell.block_interpreter_eval for a deployment that has already
+   * accepted this risk.
+   */
+  #evaluateInterpreterEval(action) {
+    if (!this.policy.shell.block_interpreter_eval) {
+      const verdict = VERDICT.WARN;
+      return makeDecision({
+        verdict,
+        reason: `Command "${action.resource.value}" invokes an interpreter with an inline-code flag; shell.block_interpreter_eval is disabled, so this is flagged rather than blocked.`,
+        risk: assessRisk({ sensitivity: RISK.HIGH, verdict }),
+        rule: 'shell.block_interpreter_eval',
+      });
+    }
+
+    const verdict = VERDICT.BLOCK;
+    return makeDecision({
+      verdict,
+      reason: `Command "${action.resource.value}" invokes a general-purpose interpreter with an inline-code flag (e.g. -e/-c/-Command); this would bypass shell.allowed's binary-name-only enforcement, so it is blocked by default regardless of whether the interpreter itself is allowed.`,
+      risk: assessRisk({ sensitivity: RISK.CRITICAL, verdict, credentialInvolved: true }),
+      rule: 'shell.block_interpreter_eval',
     });
   }
 

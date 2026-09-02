@@ -1,5 +1,13 @@
 import { createAction } from '../../core/action.js';
-import { PATH_KEY_RE, URL_RE, WRITE_TOOL_RE, SECRET_PATTERNS, looksLikePath, extractHostname } from '../../core/resource-heuristics.js';
+import {
+  PATH_KEY_RE,
+  URL_RE,
+  WRITE_TOOL_RE,
+  SECRET_PATTERNS,
+  looksLikePath,
+  extractHostname,
+  isInterpreterEvalAttempt,
+} from '../../core/resource-heuristics.js';
 
 const SHELL_TOOL_RE = /shell|exec|command|run_cmd|terminal|bash|powershell|^cmd$/i;
 const SHELL_KEY_RE = /^(command|cmd|script)$/i;
@@ -50,11 +58,17 @@ export function mcpRequestToActions(message, context) {
 
   walkStrings(args, (key, value) => {
     if (isShellTool && SHELL_KEY_RE.test(key)) {
-      const binary = value.trim().split(/\s+/)[0];
+      const parts = value.trim().split(/\s+/);
+      const binary = parts[0];
       if (binary) {
         actions.push(
           createAction({ verb: 'execute', resourceType: 'shell', resourceValue: binary, context: baseContext })
         );
+        if (isInterpreterEvalAttempt(binary, parts.slice(1))) {
+          actions.push(
+            createAction({ verb: 'execute', resourceType: 'interpreter-eval', resourceValue: value, context: baseContext })
+          );
+        }
       }
     }
 
