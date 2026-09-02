@@ -1,0 +1,53 @@
+# AgentGuard default policy — Phase 1 reference configuration.
+# See README.md "Configuring policies" for the full schema and the
+# documented reasoning behind each default (why .env is WARN but
+# ~/.ssh is BLOCK, why shell defaults to deny-by-default, etc).
+
+filesystem:
+  # Optional allowlist. Left empty here: filesystem access is unrestricted
+  # except for the deny/warn rules below. Set this per-project, e.g.
+  # ["./workspace/**"], to also WARN on anything outside your project dir.
+  allow: []
+
+  # BLOCK, risk CRITICAL. No legitimate agent workflow needs these.
+  deny:
+    - "~/.ssh/**"
+    - "~/.aws/**"
+    - "~/.aws/credentials"
+    - "~/.config/gcloud/**"
+    - "~/.kube/**"
+    - "**/id_rsa"
+    - "**/id_ed25519"
+    - "**/*.pem"
+
+  # WARN, risk MEDIUM. Often legitimately read by tooling/tests, so a hard
+  # block would break normal dev workflows — but worth surfacing.
+  warn:
+    - ".env"
+    - ".env.*"
+    - "**/credentials.json"
+    - "**/secrets.yaml"
+
+shell:
+  # Deny-by-default: only binaries listed here may be invoked through an
+  # MCP shell/exec-style tool. An empty list blocks all shell execution.
+  allowed:
+    - git
+    - npm
+    - node
+    - python
+
+mcp:
+  # Empty = trust all configured MCP servers (no reputation data in Phase 1).
+  # List specific server names to WARN on anything not explicitly trusted.
+  allowed_servers: []
+
+network:
+  # Empty = no restriction. Only domains visible in MCP tool-call arguments
+  # can be checked at all (see README limitations on network visibility).
+  allowed_domains: []
+
+secrets:
+  # BLOCK any tool-call argument that matches a known secret pattern
+  # (AWS access key, private key block, generic api-key/token assignment).
+  block_exfiltration: true

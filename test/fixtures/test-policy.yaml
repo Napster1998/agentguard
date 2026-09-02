@@ -1,0 +1,24 @@
+filesystem:
+  allow: []
+  deny:
+    - "~/.ssh/**"
+    - "~/.aws/**"
+    - "~/.aws/credentials"
+  warn:
+    - ".env"
+    - ".env.*"
+
+shell:
+  allowed:
+    - git
+    - npm
+
+mcp:
+  allowed_servers:
+    - trusted-server
+
+network:
+  allowed_domains: []
+
+secrets:
+  block_exfiltration: true

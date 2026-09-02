@@ -1,0 +1,28 @@
+# Same as policy/default-policy.yaml, but with mcp.allowed_servers populated
+# so the demo can actually show the WARN-on-untrusted-server case (the
+# shipped default leaves that list empty — see its comments for why).
+filesystem:
+  allow: []
+  deny:
+    - "~/.ssh/**"
+    - "~/.aws/**"
+    - "~/.aws/credentials"
+  warn:
+    - ".env"
+    - ".env.*"
+
+shell:
+  allowed:
+    - git
+    - npm
+    - node
+
+mcp:
+  allowed_servers:
+    - trusted-server
+
+network:
+  allowed_domains: []
+
+secrets:
+  block_exfiltration: true
