@@ -10,6 +10,7 @@ import { assessRisk } from '../../core/risk-engine.js';
 import { createSecurityEvent } from '../../core/security-event.js';
 import { mcpRequestToActions } from './translate.js';
 import { inspectResponse } from './response-inspect.js';
+import { resolveSpawnTarget } from '../host/spawn-target.js';
 
 const NO_ACTION_DECISION = { verdict: VERDICT.ALLOW, reason: 'No resources required policy evaluation.', risk: RISK.NONE, rule: null };
 
@@ -37,7 +38,10 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
   // response handler knows which tool/server it belongs to.
   const pendingRequests = new Map();
 
-  const child = spawn(serverCommand, serverArgs, { stdio: ['pipe', 'pipe', 'inherit'] });
+  // May throw SpawnRefusal (Windows .cmd shim with cmd.exe-unsafe characters);
+  // the CLI turns that into a clean one-line error.
+  const target = resolveSpawnTarget(serverCommand, serverArgs);
+  const child = spawn(target.command, target.args, { stdio: ['pipe', 'pipe', 'inherit'] });
 
   const childOut = readline.createInterface({ input: child.stdout });
   childOut.on('line', (line) => {
@@ -246,6 +250,16 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
     // WARN forwards the original response unchanged (fail-open, logged).
     stdout.write(line + '\n');
   }
+
+  // The downstream server could not even be started (missing command, bad
+  // permissions). Say so in one line instead of an unhandled-'error' stack
+  // trace, and stop: a gateway with no server behind it can only hang.
+  child.on('error', (err) => {
+    process.stderr.write(`[AgentGuard] could not start the MCP server "${serverCommand}": ${err.code || err.message}\n`);
+    logger.close();
+    agentIn.close();
+    process.exitCode = 1;
+  });
 
   child.on('exit', (code) => {
     logger.close();

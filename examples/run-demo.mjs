@@ -22,6 +22,11 @@ import { runEventsCommand } from '../src/cli/events-command.js';
 import { runExecCommand } from '../src/cli/exec-command.js';
 import { bold } from '../src/core/colors.js';
 
+// The demo must look the same on every machine, so it never reads the
+// presenter's real ~/.agentguard policy (which `agentguard wrap` may have
+// created). Nothing is ever written here; the path simply does not exist.
+process.env.AGENTGUARD_HOME = path.join(os.tmpdir(), `agentguard-demo-home-${Date.now()}`);
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const CLI = path.join(repoRoot, 'bin', 'agentguard.js');

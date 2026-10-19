@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { correlate } from '../core/correlation-engine.js';
 import { colorDecision, colorRisk, bold } from '../core/colors.js';
+import { homePaths } from '../core/agentguard-home.js';
 
 const RULE = '─'.repeat(40);
 const DECISION_WIDTH = 6;
@@ -116,10 +117,9 @@ export function formatEvents(events, { sessionId, risk, blockedOnly } = {}) {
 
 export function runEventsCommand(argv) {
   const opts = parseArgs(argv);
-  if (!opts.logFile) {
-    process.stderr.write('Usage: agentguard events --log <file> [--session <id>] [--risk <level>] [--blocked]\n');
-    process.exit(2);
-  }
+  // No --log: read the shared audit log that `agentguard wrap` points every
+  // wrapped server at (~/.agentguard/audit.jsonl, or $AGENTGUARD_HOME).
+  if (!opts.logFile) opts.logFile = homePaths().audit;
   const events = readEvents(opts.logFile);
   process.stdout.write(formatEvents(events, opts) + '\n');
 }

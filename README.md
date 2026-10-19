@@ -399,6 +399,18 @@ only, never executes), checks this machine's own listening-socket table for
 exposure beyond localhost, checks sensitive-path existence/permissions only
 (never contents), produces a `SecurityPosture`.
 
+**Onboarding (`agentguard wrap` / `unwrap` / `status`, Phase 5):** finds the
+MCP servers configured in known AI apps (one shared client list used by both
+the scanner and `wrap`), and rewrites each stdio server's entry to launch
+through the gateway. Preview by default; `--apply` backs up each file's exact
+bytes first and writes atomically, refusing if the app changed the file in the
+meantime. Every other key in an entry (`env`, `cwd`, ...) is preserved, and
+the original command is recoverable from the wrapped entry itself, so
+`unwrap` never depends on a separate state file. Generates
+`~/.agentguard/policy.yaml` (the shipped defaults plus the servers you
+approved) and one shared audit log. `status` reports every client and server
+as protected, needs-repair, or not protected **and why**.
+
 **`agentguard events` (Phase 3 additions):** `--risk <level>` and
 `--blocked` filters on the displayed event list; runs the **correlation
 engine** against each session's full (unfiltered) event set and prints any
@@ -421,6 +433,25 @@ resulting `Detection`s beneath that session.
   any other field name is not seen (F10 in `SECURITY-ASSESSMENT.md`), and
   there is no raw socket visibility into what a real MCP server process does
   on its own. An unlisted domain is a WARN, not a BLOCK.
+- **`agentguard wrap` covers only what it knows and can safely edit.** It
+  only looks in the known config locations (`src/adapters/discovery/client-configs.js`);
+  an app not on that list is invisible to it (use `--config <file>` for a JSON
+  file with an `mcpServers` section). Claude Code's own user settings file
+  (`~/.claude.json`) is *discovered but never rewritten* — the app edits it
+  continuously. **Remote (HTTP/SSE) MCP servers are not protected** — only
+  stdio servers can be wrapped — and `status` says so per server. The app must
+  be restarted for a change to take effect, an app update can rewrite its own
+  config and drop the wrap (`status` shows it), and a server added later is
+  unprotected until `wrap --apply` runs again. The gateway remains an
+  opt-in boundary, not a mandatory chokepoint (see Threat model).
+- **The generated policy is the permissive shipped default** plus an approved-
+  server list: no network allowlist, so an unlisted domain never even WARNs
+  until you add `network.allowed_domains`. Secrets in arguments are still
+  BLOCKed, and sensitive paths still denied. A WARN is recorded in the audit
+  log but **not shown in the AI app's chat** (only a BLOCK is, via its error).
+- **On Windows, `.cmd` launchers (e.g. `npx`) are started through `cmd.exe`**;
+  an argument containing `& | < > ^ % "` is refused with a message rather than
+  escaped, and a `.cmd` path containing a space is refused.
 - **MCP response inspection is pattern-matching, not comprehension** — will
   have both false positives (a legitimate response happens to contain
   "ignore" and "instructions" near each other) and false negatives (a
@@ -471,16 +502,28 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 145 tests: policy/risk engine, translation, discovery, correlation,
-                 # response inspection, exec wrapper (all with fake data sources where
-                 # possible) + real end-to-end proxy/exec/CLI process spawns, plus 35
-                 # security-validation regression tests (test/security-validation/) —
-                 # see SECURITY-ASSESSMENT.md
+npm test        # 182 tests: policy/risk engine, translation, discovery, correlation,
+                 # response inspection, exec wrapper, wrap/unwrap/status (all with fake
+                 # data sources or a sandboxed fake home where possible) + real
+                 # end-to-end proxy/exec/CLI process spawns, plus 42 security-validation
+                 # regression tests (test/security-validation/) — see SECURITY-ASSESSMENT.md
 npm run demo    # the full narrative — see "DevDay demo flow" below
 npm run scan    # agentguard scan against THIS machine
 ```
 
-To wrap a real MCP server:
+To protect the MCP servers **already configured** in the AI apps on a machine
+(Claude Desktop, Google Antigravity, a project's `.mcp.json`) without
+hand-editing JSON — see [docs/TESTER-GUIDE.md](docs/TESTER-GUIDE.md):
+
+```bash
+node bin/agentguard.js wrap            # PREVIEW: what would change; changes nothing
+node bin/agentguard.js wrap --apply    # back up each config, then wrap its servers
+node bin/agentguard.js status          # what is protected, what is not, and why
+node bin/agentguard.js unwrap --apply  # restore every original entry
+node bin/agentguard.js events          # shared audit log, no flags needed
+```
+
+To wrap a single real MCP server by hand:
 
 ```bash
 node bin/agentguard.js gateway \

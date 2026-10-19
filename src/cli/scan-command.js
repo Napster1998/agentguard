@@ -4,6 +4,7 @@ import yaml from 'js-yaml';
 import { runScan } from '../adapters/discovery/scan.js';
 import { applyDefaults } from '../core/policy-engine.js';
 import { colorSeverity, bold } from '../core/colors.js';
+import { homePaths } from '../core/agentguard-home.js';
 
 const RULE = '─'.repeat(40);
 
@@ -17,8 +18,11 @@ function parseArgs(argv) {
 }
 
 function loadPolicy(policyPath) {
-  if (!policyPath) return applyDefaults({});
-  const raw = yaml.load(fs.readFileSync(policyPath, 'utf8'));
+  // No --policy: use the policy `agentguard wrap` generated, if there is one,
+  // so servers you approved show as trusted. Otherwise the shipped defaults.
+  const effective = policyPath || (fs.existsSync(homePaths().policy) ? homePaths().policy : null);
+  if (!effective) return applyDefaults({});
+  const raw = yaml.load(fs.readFileSync(effective, 'utf8'));
   return applyDefaults(raw);
 }
 

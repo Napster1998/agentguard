@@ -1,6 +1,6 @@
 # AgentGuard Security Assessment (Phase 3.5)
 
-**Status:** Complete. 10 findings identified and reproduced with automated tests; 10 remediated (9 fully, 1 partially — see F5). All fixes have permanent regression tests. 145/145 tests passing. F1–F9 came from the Phase 3.5 red-team; **F10 was found afterwards, by running the real gateway in front of a real third-party MCP server (Burp Suite)** — see F10.
+**Status:** Complete. 10 findings identified and reproduced with automated tests; 10 remediated (9 fully, 1 partially — see F5). All fixes have permanent regression tests. 182/182 tests passing (the count includes the Phase 5 onboarding tests, which add no security finding of their own). F1–F9 came from the Phase 3.5 red-team; **F10 was found afterwards, by running the real gateway in front of a real third-party MCP server (Burp Suite)** — see F10.
 
 ## Scope
 

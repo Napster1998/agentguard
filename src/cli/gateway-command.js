@@ -4,6 +4,7 @@ import yaml from 'js-yaml';
 
 import { applyDefaults } from '../core/policy-engine.js';
 import { startProxy } from '../adapters/mcp/proxy.js';
+import { SpawnRefusal } from '../adapters/host/spawn-target.js';
 
 function usage() {
   process.stderr.write(
@@ -57,11 +58,17 @@ export function runGatewayCommand(argv) {
   const policy = applyDefaults(policyRaw);
   const serverName = opts.serverName || path.basename(serverCmd[0]);
 
-  return startProxy({
-    policy,
-    serverCommand: serverCmd[0],
-    serverArgs: serverCmd.slice(1),
-    logFile: opts.logFile,
-    serverName,
-  });
+  try {
+    return startProxy({
+      policy,
+      serverCommand: serverCmd[0],
+      serverArgs: serverCmd.slice(1),
+      logFile: opts.logFile,
+      serverName,
+    });
+  } catch (err) {
+    if (!(err instanceof SpawnRefusal)) throw err;
+    process.stderr.write(`[AgentGuard] ${err.message}\n`);
+    process.exit(1);
+  }
 }

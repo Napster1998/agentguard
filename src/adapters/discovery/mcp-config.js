@@ -1,32 +1,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
+
+import { clientConfigs } from './client-configs.js';
 
 /**
  * Known MCP client config locations, cross-platform, best-effort — NOT
- * exhaustive. A project-level .mcp.json, Claude Code's global config,
- * Claude Desktop's per-OS config path, and Google Antigravity's global MCP
- * config (~/.gemini/config/mcp_config.json - verified on a real Windows
- * install; assumed to be the same home-relative path on macOS/Linux, which
- * has not been verified on a real install).
+ * exhaustive. Derived from the shared client list (client-configs.js) so the
+ * scanner and `agentguard wrap` always look in the same places. Google
+ * Antigravity's path (~/.gemini/config/mcp_config.json) is verified on real
+ * Windows and macOS installs.
  */
-export function knownConfigLocations({ cwd = process.cwd(), platform = process.platform, homedir = os.homedir() } = {}) {
-  const locations = [
-    path.join(cwd, '.mcp.json'),
-    path.join(homedir, '.claude.json'),
-    path.join(homedir, '.gemini', 'config', 'mcp_config.json'),
-  ];
-
-  if (platform === 'win32') {
-    const appData = process.env.APPDATA || path.join(homedir, 'AppData', 'Roaming');
-    locations.push(path.join(appData, 'Claude', 'claude_desktop_config.json'));
-  } else if (platform === 'darwin') {
-    locations.push(path.join(homedir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'));
-  } else {
-    locations.push(path.join(homedir, '.config', 'Claude', 'claude_desktop_config.json'));
-  }
-
-  return locations;
+export function knownConfigLocations({ cwd = process.cwd(), platform = process.platform, homedir = os.homedir(), env = process.env } = {}) {
+  return clientConfigs({ cwd, platform, homedir, env }).map((c) => c.path);
 }
 
 /**
