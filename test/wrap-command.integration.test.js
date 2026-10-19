@@ -213,6 +213,36 @@ test('bad usage exits 2 and changes nothing', async () => {
   }
 });
 
+test('a missing policy file is flagged by status AND recreated by `wrap --apply`, even when every server is already wrapped', async () => {
+  const sb = sandbox();
+  try {
+    sb.put(sb.clients['antigravity'], { mcpServers: { files: server } });
+    await sb.run(['wrap', '--apply']);
+    const policy = path.join(sb.env.AGENTGUARD_HOME, 'policy.yaml');
+    const wrappedConfig = fs.readFileSync(sb.clients['antigravity'], 'utf8');
+
+    fs.rmSync(policy); // a wrapped entry whose policy is gone cannot start
+    const status = await sb.run(['status']);
+    assert.match(status.stdout, /Problems/);
+    assert.match(status.stdout, /will fail to start, missing file/);
+    assert.match(status.stdout, /agentguard wrap --apply/, 'the advice status gives');
+
+    const preview = await sb.run(['wrap']);
+    assert.match(preview.stdout, /missing: wrapped servers cannot start without it, so it will be recreated/, 'preview says it would recreate the policy');
+    assert.equal(fs.existsSync(policy), false, 'preview creates nothing');
+
+    const fixed = await sb.run(['wrap', '--apply']);
+    assert.equal(fixed.code, 0, fixed.stdout);
+    assert.match(fixed.stdout, /created policy/);
+    assert.ok(!/Nothing to wrap/.test(fixed.stdout), 'the advice status gives actually works');
+    assert.match(fs.readFileSync(policy, 'utf8'), /files/, 'approved name restored');
+    assert.equal(fs.readFileSync(sb.clients['antigravity'], 'utf8'), wrappedConfig, 'the client config was not touched again');
+    assert.ok(!/Problems/.test((await sb.run(['status'])).stdout));
+  } finally {
+    sb.cleanup();
+  }
+});
+
 test('status flags a wrapper that points at a different install, and wrap --apply repairs it', async () => {
   const sb = sandbox();
   try {

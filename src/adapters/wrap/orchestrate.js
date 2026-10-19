@@ -72,6 +72,15 @@ export function planAll(mode, targets, ctx) {
 export const hasChanges = (plan) => plan.some((t) => t.servers.some((s) => s.action !== 'skip'));
 
 /**
+ * True when some already-wrapped server points at the policy file but that
+ * file is gone. Such a server cannot start, and `wrap --apply` must be able to
+ * repair it even though no client config needs changing.
+ */
+export function policyMissing(plan, ctx) {
+  return !fs.existsSync(ctx.paths.policy) && plan.some((t) => t.client.wrappable && t.servers.some((s) => s.state === 'wrapped'));
+}
+
+/**
  * Applies a plan. For wrap: the policy is ensured FIRST (a wrapped entry
  * with no policy file would not start). Each config file is written
  * independently and atomically; a failure on one is reported and does not
@@ -80,7 +89,7 @@ export const hasChanges = (plan) => plan.some((t) => t.servers.some((s) => s.act
 export function applyPlan(mode, plan, ctx) {
   const outcome = { policy: null, files: [] };
 
-  if (mode === 'wrap' && hasChanges(plan)) {
+  if (mode === 'wrap' && (hasChanges(plan) || policyMissing(plan, ctx))) {
     const names = plan.flatMap((t) =>
       t.client.wrappable ? t.servers.filter((s) => s.action !== 'skip' || s.state === 'wrapped').map((s) => s.name) : []
     );

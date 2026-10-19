@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { bold } from '../core/colors.js';
 import { listProcesses as defaultListProcesses } from '../adapters/host/process-list.js';
-import { buildContext, selectTargets, planAll, applyPlan, hasChanges } from '../adapters/wrap/orchestrate.js';
+import { buildContext, selectTargets, planAll, applyPlan, hasChanges, policyMissing } from '../adapters/wrap/orchestrate.js';
 
 const RULE = '─'.repeat(40);
 
@@ -113,14 +113,21 @@ export async function runWrapCommand(argv, mode = 'wrap', deps = {}) {
   write(formatPlan(plan) + '\n\n');
 
   const changing = hasChanges(plan);
-  if (!changing) {
+  // Wrapped servers whose policy file has been deleted cannot start; recreating
+  // it is a repair even when no client config needs rewriting.
+  const needsPolicy = mode === 'wrap' && policyMissing(plan, ctx);
+  if (!changing && !needsPolicy) {
     write(mode === 'wrap' ? 'Nothing to wrap: every supported server is already protected or was skipped (see above).\n' : 'Nothing to unwrap.\n');
     return { plan, outcome: null };
   }
 
-  const names = [...new Set(plan.flatMap((t) => t.servers.filter((s) => s.action !== 'skip').map((s) => s.name)))];
+  const names = [
+    ...new Set(plan.flatMap((t) => t.servers.filter((s) => s.action !== 'skip' || (needsPolicy && s.state === 'wrapped')).map((s) => s.name))),
+  ];
   if (mode === 'wrap') {
-    write(`Policy: ${ctx.paths.policy}\n  servers you approve by applying: ${names.join(', ')}\n`);
+    write(`Policy: ${ctx.paths.policy}\n`);
+    if (needsPolicy) write('  missing: wrapped servers cannot start without it, so it will be recreated\n');
+    write(`  servers you approve by applying: ${names.join(', ')}\n`);
     write(`Audit log: ${ctx.paths.audit}\n\n`);
   }
 
