@@ -49,7 +49,8 @@ export function classifyEntry(name, def, ctx) {
 
   const transport = typeof def.transport === 'string' ? def.transport.toLowerCase() : null;
   if (def.url || (transport && REMOTE_TRANSPORTS.has(transport))) {
-    return { state: 'remote', reason: 'remote (HTTP/SSE) servers are not supported yet, so this one stays unprotected' };
+    const why = def.url ? 'the entry has a "url"' : `its transport is "${def.transport}"`;
+    return { state: 'remote', reason: `remote (HTTP/SSE) servers are not supported yet, so this one stays unprotected (${why})` };
   }
   if (typeof def.command !== 'string' || def.command.trim() === '') {
     return { state: 'invalid', reason: 'no command to wrap' };

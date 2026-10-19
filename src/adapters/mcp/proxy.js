@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import readline from 'node:readline';
 import crypto from 'node:crypto';
 
@@ -14,6 +14,21 @@ import { resolveSpawnTarget } from '../host/spawn-target.js';
 
 const NO_ACTION_DECISION = { verdict: VERDICT.ALLOW, reason: 'No resources required policy evaluation.', risk: RISK.NONE, rule: null };
 
+// How long a server that ignores end-of-input gets before it is force-stopped
+// once its client has disconnected.
+const DEFAULT_SHUTDOWN_GRACE_MS = 3000;
+
+function stopServer(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32' && child.pid) {
+    // child.kill() only ends the direct child; a launcher such as
+    // `cmd.exe /c npx ...` would leave the real server running.
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+  } else {
+    child.kill();
+  }
+}
+
 /**
  * Starts the gateway: agent <-stdio-> this process <-stdio-> real MCP server.
  *
@@ -26,7 +41,16 @@ const NO_ACTION_DECISION = { verdict: VERDICT.ALLOW, reason: 'No resources requi
  * Responses to a forwarded `tools/call` are inspected on the way back (see
  * response-inspect.js) before being relayed to the agent.
  */
-export function startProxy({ policy, serverCommand, serverArgs, logFile, serverName, stdin = process.stdin, stdout = process.stdout }) {
+export function startProxy({
+  policy,
+  serverCommand,
+  serverArgs,
+  logFile,
+  serverName,
+  stdin = process.stdin,
+  stdout = process.stdout,
+  shutdownGraceMs = DEFAULT_SHUTDOWN_GRACE_MS,
+}) {
   const engine = new PolicyEngine(policy);
   const logger = new AuditLogger({ logFile });
   const sessionId = crypto.randomUUID();
@@ -251,6 +275,17 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
     stdout.write(line + '\n');
   }
 
+  // The client went away (closed our stdin: the app quit or restarted). A
+  // server the app had launched directly would see end-of-input and exit, so
+  // pass that on; otherwise every app restart leaks a gateway plus its server.
+  // A server that ignores end-of-input is force-stopped after a short grace.
+  agentIn.on('close', () => {
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+    child.stdin.end();
+    const timer = setTimeout(() => stopServer(child), shutdownGraceMs);
+    child.once('exit', () => clearTimeout(timer));
+  });
+
   // The downstream server could not even be started (missing command, bad
   // permissions). Say so in one line instead of an unhandled-'error' stack
   // trace, and stop: a gateway with no server behind it can only hang.
@@ -263,6 +298,7 @@ export function startProxy({ policy, serverCommand, serverArgs, logFile, serverN
 
   child.on('exit', (code) => {
     logger.close();
+    agentIn.close(); // no server left: don't linger waiting on a client that has nothing to talk to
     process.exitCode = code ?? 0;
   });
 

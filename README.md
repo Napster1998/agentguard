@@ -444,6 +444,11 @@ resulting `Detection`s beneath that session.
   config and drop the wrap (`status` shows it), and a server added later is
   unprotected until `wrap --apply` runs again. The gateway remains an
   opt-in boundary, not a mandatory chokepoint (see Threat model).
+- **A BLOCK stops the tool call, not the model's knowledge.** In a real test, an
+  AI app that had a (fake) key blocked from going to a tool then base64-encoded
+  it itself in its chat reply, and described AgentGuard's error as a "connector
+  hiccup" instead of relaying it. The gateway controls what reaches tools; it
+  cannot control what a model says or how an app presents a tool error.
 - **The generated policy is the permissive shipped default** plus an approved-
   server list: no network allowlist, so an unlisted domain never even WARNs
   until you add `network.allowed_domains`. Secrets in arguments are still

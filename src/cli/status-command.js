@@ -62,7 +62,7 @@ export function formatStatus(plan, ctx) {
         lines.push(`    ⚠ ${s.name.padEnd(18)} wrapped, but needs repair (agentguard wrap --apply)`);
       } else if (s.state === 'remote') {
         unprotectedCount++;
-        lines.push(`    ⚠ ${s.name.padEnd(18)} NOT protected: remote (HTTP/SSE) servers are not supported yet`);
+        lines.push(`    ⚠ ${s.name.padEnd(18)} NOT protected: ${s.reason}`);
       } else if (s.state === 'unwrapped') {
         unprotectedCount++;
         lines.push(`    ⚠ ${s.name.padEnd(18)} NOT protected (agentguard wrap --apply)`);
