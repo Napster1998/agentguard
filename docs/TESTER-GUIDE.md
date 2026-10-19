@@ -26,7 +26,7 @@ You need **Node.js 20 or newer** and **git**. If you have neither:
 |---|---|
 | Windows (PowerShell) | `winget install OpenJS.NodeJS.LTS` and `winget install Git.Git`, then open a new terminal |
 | macOS | install [Homebrew](https://brew.sh), then `brew install node git` |
-| Linux (Debian/Ubuntu) | `sudo apt install -y git curl`, then install Node 20+ from [nodejs.org](https://nodejs.org) or NodeSource |
+| Linux (Debian/Ubuntu) | `sudo apt install -y git curl`, then `curl -fsSL https://deb.nodesource.com/setup_lts.x \| sudo -E bash -` and `sudo apt install -y nodejs` (we have not tested Linux ourselves) |
 
 Then:
 
@@ -39,7 +39,8 @@ npm link          # optional: gives you a global `agentguard` command
 ```
 
 Without `npm link`, replace `agentguard` below with `node bin/agentguard.js`
-(run from the `agentguard` folder).
+(run from the `agentguard` folder). If `npm link` fails with a permissions
+error (EACCES), don't use `sudo`: skip it and use `node bin/agentguard.js`.
 
 ## 2. Look first (changes nothing)
 
@@ -86,10 +87,13 @@ credential) to any tool that takes text:
 AKIAIOSFODNN7EXAMPLE
 ```
 
-The app should report `Blocked by AgentGuard policy: ... aws-access-key-id`,
-and `agentguard events` shows a `BLOCK`. Some AI services filter such strings
-themselves before any tool is called; if so, nothing reaches AgentGuard and
-nothing is logged. That is normal.
+The app may report `Blocked by AgentGuard policy: ... aws-access-key-id`, and
+`agentguard events` shows a `BLOCK`. **Trust `events`, not the chat:** some apps
+summarize a tool error instead of showing it (one called it a "connector
+hiccup"), and the model may still print the string itself, because AgentGuard
+stops the tool call, not what the model says. Some AI services also filter such
+strings themselves before any tool is called; if so, nothing reaches AgentGuard
+and nothing is logged. All of that is normal.
 
 ## 5. Undo
 
@@ -115,8 +119,11 @@ in the file alone. Restart the app again. (Your policy and audit log in
   paths like `~/.ssh` and `~/.aws` are blocked, but there is no network
   allowlist until you add `network.allowed_domains` to
   `~/.agentguard/policy.yaml`.
-- **Only apps on AgentGuard's list are found.** For another app whose config is
-  a JSON file with an `mcpServers` section: `agentguard wrap --config <file>`.
+- **Only apps on AgentGuard's list are found, in their usual places.** For
+  another app, or an install in an unusual location, whose config is a JSON file
+  with an `mcpServers` section: `agentguard wrap --config <file>`.
+- **A project's `.mcp.json` is only found when you run `wrap` from that
+  project's folder**, or pass `--project <folder>`.
 - **Servers you add later are unprotected** until you run `wrap --apply` again.
   An app update can also rewrite its own config and drop the protection;
   `status` shows it.
@@ -129,17 +136,24 @@ in the file alone. Restart the app again. (Your policy and audit log in
 |---|---|
 | A tool shows as unavailable in the app after `wrap` | `agentguard status`, then read its "Problems" section. A moved or upgraded Node/AgentGuard install is fixed by re-running `agentguard wrap --apply`. |
 | `refusing to start ... through cmd.exe` (Windows) | A launcher argument contains `& \| < > ^ % "`. Use the underlying `.exe`, or remove the character. |
+| An app you have installed shows as "not found" | AgentGuard only looks in the usual place. Find the app's MCP config file (a JSON file with an `mcpServers` section) and run `agentguard wrap --config <that file>`. Tell us the app and the path. |
+| `status` reports a missing policy file | `agentguard wrap --apply` recreates it (make sure you have pulled the latest code: `git pull`). |
 | Want everything back to normal right now | `agentguard unwrap --apply`, then restart the app. |
 
 ## What to send back
 
-Run these and send the output (they contain no tool arguments or tokens, but
-look them over first):
+Run these and send the output:
 
 ```bash
 agentguard status
 agentguard events
 ```
+
+**Look them over first.** They never contain secret values, file contents or
+tool arguments as such, but they do contain your computer username (in file
+paths), the paths of config files, and the file paths and website names that
+tool calls touched (for example `filesystem:/Users/you/project/notes.txt`). Black
+out anything you would rather not share.
 
 And tell us: which app, which OS, what you expected, and what actually
 happened. Anything that broke a tool that worked before is the most valuable

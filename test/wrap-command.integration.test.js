@@ -225,6 +225,7 @@ test('a missing policy file is flagged by status AND recreated by `wrap --apply`
     const status = await sb.run(['status']);
     assert.match(status.stdout, /Problems/);
     assert.match(status.stdout, /will fail to start, missing file/);
+    assert.match(status.stdout, /protected.*See Problems above/, 'the summary line does not claim all-clear');
     assert.match(status.stdout, /agentguard wrap --apply/, 'the advice status gives');
 
     const preview = await sb.run(['wrap']);

@@ -80,7 +80,8 @@ export function formatStatus(plan, ctx) {
   }
 
   const repair = repairCount ? `, ${repairCount} needs repair` : '';
-  lines.push('', `${protectedCount} protected${repair}, ${unprotectedCount} not protected.`);
+  const seeProblems = problems.length ? ' See Problems above: a server listed as protected may still fail to start.' : '';
+  lines.push('', `${protectedCount} protected${repair}, ${unprotectedCount} not protected.${seeProblems}`);
   lines.push('Apps not on AgentGuard\'s list are not covered; use `agentguard wrap --config <file>` for a JSON file with an "mcpServers" section.');
   return lines.join('\n');
 }
