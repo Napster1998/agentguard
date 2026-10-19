@@ -84,3 +84,18 @@ test('parses the real Antigravity mcp_config.json shape (stdio server launched v
   assert.equal(servers[0].transport, 'stdio');
   assert.equal(servers[0].trust, 'unknown');
 });
+
+test('an empty (0-byte) or whitespace-only config is "no servers", not a parse error', () => {
+  for (const raw of ['', '  \n\t ']) {
+    const { servers, errors } = discoverMcpServers({ locations: ['/fake/mcp_config.json'], readFile: () => raw });
+    assert.deepEqual(servers, []);
+    assert.deepEqual(errors, []);
+  }
+});
+
+test('genuinely malformed non-empty config is still reported as an error', () => {
+  const { servers, errors } = discoverMcpServers({ locations: ['/fake/mcp_config.json'], readFile: () => '{ not json' });
+  assert.deepEqual(servers, []);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /Malformed JSON/);
+});

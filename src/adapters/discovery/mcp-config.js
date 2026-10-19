@@ -50,6 +50,11 @@ export function discoverMcpServers({ locations, trustedServerNames = [], readFil
       continue; // not present / not readable - not an error, just absent
     }
 
+    // An empty or whitespace-only file is a valid "no servers configured yet"
+    // state (Antigravity creates a 0-byte mcp_config.json at install), not a
+    // malformed config - don't report it as a parse error.
+    if (typeof raw === 'string' && raw.trim() === '') continue;
+
     let parsed;
     try {
       parsed = JSON.parse(raw);
