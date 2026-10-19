@@ -415,9 +415,12 @@ resulting `Detection`s beneath that session.
   original Phase 1/2 caveats: name/shape-based guessing, occasional
   low-signal extra matches, no path canonicalization/symlink resolution.
 - **Secret detection is a narrow pattern match**, not general DLP.
-- **Network enforcement is best-effort, MCP-argument-visible-URLs only** —
-  no raw socket visibility into what a real MCP server process does on its
-  own.
+- **Network enforcement is best-effort, MCP-argument-visible destinations
+  only** — full URLs, bare hostnames under `host`/`hostname`/`domain`-style
+  keys, and the `Host:` header of raw HTTP request text. A destination under
+  any other field name is not seen (F10 in `SECURITY-ASSESSMENT.md`), and
+  there is no raw socket visibility into what a real MCP server process does
+  on its own. An unlisted domain is a WARN, not a BLOCK.
 - **MCP response inspection is pattern-matching, not comprehension** — will
   have both false positives (a legitimate response happens to contain
   "ignore" and "instructions" near each other) and false negatives (a
@@ -468,7 +471,7 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 133 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 145 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper (all with fake data sources where
                  # possible) + real end-to-end proxy/exec/CLI process spawns, plus 35
                  # security-validation regression tests (test/security-validation/) —

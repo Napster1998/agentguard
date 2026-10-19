@@ -1,6 +1,6 @@
 # AgentGuard Security Assessment (Phase 3.5)
 
-**Status:** Complete. 9 findings identified and reproduced with automated tests; 9 remediated (8 fully, 1 partially — see F5). All fixes have permanent regression tests. 133/133 tests passing (98 from Phase 1–3, unchanged, plus 35 new security-validation tests).
+**Status:** Complete. 10 findings identified and reproduced with automated tests; 10 remediated (9 fully, 1 partially — see F5). All fixes have permanent regression tests. 145/145 tests passing. F1–F9 came from the Phase 3.5 red-team; **F10 was found afterwards, by running the real gateway in front of a real third-party MCP server (Burp Suite)** — see F10.
 
 ## Scope
 
@@ -101,6 +101,15 @@ Severity per the assessment's own scale (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL)
 **Reproduction:** `test/security-validation/f8-f9-misc.test.js`
 **Fix:** Brackets are stripped before comparison.
 
+### F10 — MEDIUM — A tool's network destination passed as a bare hostname or raw HTTP text was invisible to `network.allowed_domains` — **FIXED (narrowly)**
+**Component:** `src/adapters/mcp/translate.js`, `src/core/resource-heuristics.js`
+**How it was found:** not by a unit test. The gateway was run in front of the real Burp Suite MCP bridge and fed Burp's real `send_http1_request` argument shape (`content` = raw HTTP text, `targetHostname`, `targetPort`, `usesHttps`). The call was ALLOWed and Burp attempted the connection (`java.net.UnknownHostException: attacker.invalid` in Burp's own event log; a Repeater tab created by `create_repeater_tab` as visible proof). A `.invalid` hostname was used so nothing real could be contacted.
+**Scenario:** The translator treated a value as a network destination only if it began with `scheme://`. `targetHostname` matched the path-key heuristic (it contains "target") and was filed as a *filesystem path*; the raw HTTP text contained `/` and was also filed as a path. The real destination never became a network action, so the allowlist never applied.
+**Reproduction:** `test/security-validation/f10-network-destination.test.js` (F10a–F10e failed before the fix).
+**Fix:** keys ending in `host`/`hostname`/`domain` now carry a network destination (checked before the path heuristic; a `:port` suffix is stripped), and raw HTTP request text contributes its `Host:` header and/or absolute-form request target. Re-verified against the live Burp bridge: the same call is now WARN/MEDIUM with `network:attacker.invalid`.
+**Note on severity of the outcome:** an unlisted domain is a **WARN**, not a BLOCK, by existing policy design. The fix makes the destination *visible to policy*; it does not change what policy does with it.
+**Residual gap (kept as a passing test, F10g):** classification is still by key name and value shape. A destination under an unrelated key (e.g. `dest`, or `target` with a bare IP) is still not recognized as network, and bracketed IPv6 is not parsed.
+
 ### Informational (documented characteristics, not vulnerabilities)
 - Gateway/`agentguard exec` are not mandatory chokepoints — inherent to the architecture, now re-confirmed and clearly stated above.
 - `serverName` has no cryptographic binding to the spawned command — an operator-trust question, not attacker-exploitable (the agent has no influence over it).
@@ -144,6 +153,7 @@ Severity per the assessment's own scale (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL)
 
 - The interpreter-eval bypass (F2) is narrowed, not eliminated — an operator who adds `node`/`python`/similar to `shell.allowed` is still granting broad code-execution capability, just with a slightly higher bar against the most naive attempts.
 - The response-inspection split bypass (F5) is narrowed to the common `text`-key convention — a response shape that doesn't use it, or a fragment sequence with any inserted separator, still evades it.
+- Network-destination detection (F10) is narrowed to host-style key names and raw HTTP text. A destination hidden under any other field name is still invisible to `network.allowed_domains` — the same "heuristic, not schema-aware" limitation, now observed against a real server rather than only reasoned about.
 - Deep nesting remains a real (bounded, non-catastrophic) DoS surface — not fixed, documented.
 - Everything already true about the trust-boundary model (gateway/`agentguard exec` are not mandatory) remains true and is now more explicitly documented in the README threat model.
 

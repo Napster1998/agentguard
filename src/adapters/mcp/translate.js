@@ -1,11 +1,14 @@
 import { createAction } from '../../core/action.js';
 import {
   PATH_KEY_RE,
+  NETWORK_KEY_RE,
   URL_RE,
   WRITE_TOOL_RE,
   SECRET_PATTERNS,
   looksLikePath,
   extractHostname,
+  parseBareHostname,
+  parseRawHttpRequest,
   isInterpreterEvalAttempt,
 } from '../../core/resource-heuristics.js';
 
@@ -56,6 +59,15 @@ export function mcpRequestToActions(message, context) {
   const isShellTool = SHELL_TOOL_RE.test(toolName);
   const filesystemVerb = WRITE_TOOL_RE.test(toolName) ? 'write' : 'read';
 
+  // One network action per distinct host per call (a tool may name the same
+  // destination in several places, e.g. targetHostname AND a Host header).
+  const seenHosts = new Set();
+  const addNetwork = (host) => {
+    if (seenHosts.has(host)) return;
+    seenHosts.add(host);
+    actions.push(createAction({ verb: 'network', resourceType: 'network', resourceValue: host, context: baseContext }));
+  };
+
   walkStrings(args, (key, value) => {
     if (isShellTool && SHELL_KEY_RE.test(key)) {
       const parts = value.trim().split(/\s+/);
@@ -72,13 +84,20 @@ export function mcpRequestToActions(message, context) {
       }
     }
 
-    if (URL_RE.test(value)) {
+    // Network destinations, in order of specificity: raw HTTP request text
+    // (its Host header), a scheme:// URL, then a bare hostname under a
+    // host-style key. All checked before the path heuristics so a hostname
+    // or HTTP text is never filed as a filesystem path (F10).
+    const httpRequest = parseRawHttpRequest(value);
+    const bareHost = !httpRequest && !URL_RE.test(value) && NETWORK_KEY_RE.test(key) ? parseBareHostname(value) : null;
+
+    if (httpRequest) {
+      httpRequest.hosts.forEach(addNetwork);
+    } else if (URL_RE.test(value)) {
       const host = extractHostname(value);
-      if (host) {
-        actions.push(
-          createAction({ verb: 'network', resourceType: 'network', resourceValue: host, context: baseContext })
-        );
-      }
+      if (host) addNetwork(host);
+    } else if (bareHost) {
+      addNetwork(bareHost);
     } else if (PATH_KEY_RE.test(key) || looksLikePath(value)) {
       actions.push(
         createAction({ verb: filesystemVerb, resourceType: 'filesystem', resourceValue: value, context: baseContext })

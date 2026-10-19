@@ -10,6 +10,15 @@
 export const PATH_KEY_RE = /path|file|dir|directory|target|cwd|location|filename/i;
 export const URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
+// A key that ends in host/hostname/domain names a network destination
+// (e.g. `host`, `targetHostname`, `target_host`). Checked BEFORE PATH_KEY_RE
+// so a key like `targetHostname` (contains "target") isn't filed as a path.
+// Matched at the END of the key so `host_file` / `hostsPath` stay paths.
+export const NETWORK_KEY_RE = /(host|hostname|domain)$/i;
+
+const HOSTNAME_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
+const HTTP_REQUEST_LINE_RE = /^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|TRACE|CONNECT)[ \t]+(\S+)[ \t]+HTTP\/\d(\.\d)?\r?$/m;
+
 // Best-effort only: we don't know each server's/command's exact semantics,
 // so a name is the only signal available for read vs write. Defaults to
 // read (far more common) rather than over-claiming.
@@ -49,6 +58,44 @@ export function extractHostname(url) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Parses a bare hostname (optionally with a `:port` suffix) out of a value
+ * found under a host-style key. Returns the lowercased hostname, or null if
+ * the value isn't plausibly a hostname/IPv4 (anything with a slash, spaces,
+ * etc.), so callers can fall through to the existing classification.
+ * Deliberately narrow: bracketed IPv6 is not handled.
+ */
+export function parseBareHostname(value) {
+  if (typeof value !== 'string') return null;
+  const host = value.trim().replace(/:\d{1,5}$/, '');
+  return HOSTNAME_RE.test(host) ? host.toLowerCase() : null;
+}
+
+/**
+ * Recognizes raw HTTP/1.x request text (e.g. Burp's `content` argument) and
+ * returns the destination hosts it names: its `Host:` header and/or an
+ * absolute-form request target. Returns null when the value is not an HTTP
+ * request at all, so it isn't mistaken for one. An HTTP request with no
+ * recoverable host returns `{ hosts: [] }`.
+ *
+ * @returns {{hosts: string[]}|null}
+ */
+export function parseRawHttpRequest(value) {
+  if (typeof value !== 'string') return null;
+  const requestLine = value.match(HTTP_REQUEST_LINE_RE);
+  if (!requestLine || requestLine.index !== 0) return null;
+
+  const hosts = [];
+  if (URL_RE.test(requestLine[2])) {
+    const fromTarget = extractHostname(requestLine[2]);
+    if (fromTarget) hosts.push(fromTarget.toLowerCase());
+  }
+  const hostHeader = value.match(/^host:[ \t]*([^\r\n]+)/im);
+  const fromHeader = hostHeader ? parseBareHostname(hostHeader[1]) : null;
+  if (fromHeader && !hosts.includes(fromHeader)) hosts.push(fromHeader);
+  return { hosts };
 }
 
 export function findSecretMatches(value) {
