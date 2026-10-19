@@ -4,11 +4,18 @@ import path from 'node:path';
 
 /**
  * Known MCP client config locations, cross-platform, best-effort — NOT
- * exhaustive. A project-level .mcp.json, Claude Code's global config, and
- * Claude Desktop's per-OS config path.
+ * exhaustive. A project-level .mcp.json, Claude Code's global config,
+ * Claude Desktop's per-OS config path, and Google Antigravity's global MCP
+ * config (~/.gemini/config/mcp_config.json - verified on a real Windows
+ * install; assumed to be the same home-relative path on macOS/Linux, which
+ * has not been verified on a real install).
  */
 export function knownConfigLocations({ cwd = process.cwd(), platform = process.platform, homedir = os.homedir() } = {}) {
-  const locations = [path.join(cwd, '.mcp.json'), path.join(homedir, '.claude.json')];
+  const locations = [
+    path.join(cwd, '.mcp.json'),
+    path.join(homedir, '.claude.json'),
+    path.join(homedir, '.gemini', 'config', 'mcp_config.json'),
+  ];
 
   if (platform === 'win32') {
     const appData = process.env.APPDATA || path.join(homedir, 'AppData', 'Roaming');

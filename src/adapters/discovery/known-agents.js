@@ -36,4 +36,15 @@ export const KNOWN_AGENTS = [
     binaryNames: ['hermes'],
     defaultPorts: [],
   },
+  {
+    // Google Antigravity (Electron IDE). Process/binary name verified against
+    // a real Windows install (Antigravity.exe); macOS/Linux process names are
+    // not yet verified on a real install - an unmatched process falls through
+    // to the PATH lookup rather than being reported as absent.
+    id: 'antigravity',
+    label: 'Google Antigravity',
+    processNamePatterns: [/antigravity/i],
+    binaryNames: ['antigravity'],
+    defaultPorts: [],
+  },
 ];

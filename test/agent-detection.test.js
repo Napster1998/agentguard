@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectAgents } from '../src/adapters/discovery/agent-detection.js';
+import { KNOWN_AGENTS } from '../src/adapters/discovery/known-agents.js';
 
 const registry = [
   { id: 'ollama', label: 'Ollama', processNamePatterns: [/ollama/i], binaryNames: ['ollama'], defaultPorts: [11434] },
@@ -35,4 +36,16 @@ test('missing runtime: no process match and no PATH hit -> empty result, no cras
     findOnPath: async () => null,
   });
   assert.deepEqual(detections, []);
+});
+
+test('real registry: detects Google Antigravity from its Windows process name', async () => {
+  const detections = await detectAgents({
+    registry: KNOWN_AGENTS,
+    listProcesses: async () => [{ pid: 4242, name: 'Antigravity.exe' }],
+    findOnPath: async () => null,
+  });
+  const antigravity = detections.find((d) => d.id === 'antigravity');
+  assert.ok(antigravity);
+  assert.equal(antigravity.label, 'Google Antigravity');
+  assert.equal(antigravity.detectedVia, 'process');
 });

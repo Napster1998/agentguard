@@ -59,3 +59,28 @@ test('never executes the discovered command — only parses config', () => {
   // The assertion here is really about behavior we don't have: there is no
   // spawn/exec call anywhere in discoverMcpServers, verified by inspection.
 });
+
+test('knownConfigLocations includes the Antigravity global MCP config on every platform', async () => {
+  const { knownConfigLocations } = await import('../src/adapters/discovery/mcp-config.js');
+  for (const platform of ['win32', 'darwin', 'linux']) {
+    const locations = knownConfigLocations({ cwd: '/proj', platform, homedir: '/home/u' });
+    assert.ok(
+      locations.some((l) => l.replaceAll('\\', '/').endsWith('/home/u/.gemini/config/mcp_config.json')),
+      `missing on ${platform}`
+    );
+  }
+});
+
+test('parses the real Antigravity mcp_config.json shape (stdio server launched via java -jar)', () => {
+  const raw = JSON.stringify({
+    mcpServers: {
+      burpsuite: { command: 'C:/jre/bin/java.exe', args: ['-jar', 'C:/Burp-mcp/mcp-proxy.jar', '--sse-url', 'http://127.0.0.1:9876/'] },
+    },
+  });
+  const { servers, errors } = discoverMcpServers({ locations: ['/fake/mcp_config.json'], readFile: () => raw });
+  assert.deepEqual(errors, []);
+  assert.equal(servers.length, 1);
+  assert.equal(servers[0].name, 'burpsuite');
+  assert.equal(servers[0].transport, 'stdio');
+  assert.equal(servers[0].trust, 'unknown');
+});
