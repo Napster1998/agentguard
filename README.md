@@ -507,10 +507,10 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 182 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 192 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper, wrap/unwrap/status (all with fake
                  # data sources or a sandboxed fake home where possible) + real
-                 # end-to-end proxy/exec/CLI process spawns, plus 42 security-validation
+                 # end-to-end proxy/exec/CLI process spawns, plus 49 security-validation
                  # regression tests (test/security-validation/) — see SECURITY-ASSESSMENT.md
 npm run demo    # the full narrative — see "DevDay demo flow" below
 npm run scan    # agentguard scan against THIS machine
@@ -591,7 +591,7 @@ mcp_response_inspection:
 | Action | Verdict | Risk | Why |
 |---|---|---|---|
 | Read `~/.ssh/**`, `~/.aws/**`, etc. | **BLOCK** | CRITICAL | No legitimate agent workflow needs raw credential material. |
-| Read `.env`, `.env.*` | **WARN** | HIGH | Often legitimate; a hard block breaks normal dev workflows, so it's surfaced with real weight instead. |
+| Read `.env`, `.env.*` (in any directory) | **WARN** | HIGH | Often legitimate; a hard block breaks normal dev workflows, so it's surfaced with real weight instead. |
 | Invoke a server not in `mcp.allowed_servers` | **WARN** (or ALLOW if empty) | MEDIUM | No server-reputation data; empty = trust everything configured. |
 | Shell command not in `shell.allowed` (MCP or `agentguard exec`) | **BLOCK** | HIGH | Arbitrary shell execution is the highest-leverage action available; deny-by-default. |
 | Shell command in `shell.deny` | **BLOCK**, always | HIGH | Wins even over `shell.allowed` — defense in depth. |

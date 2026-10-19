@@ -51,9 +51,16 @@ function toRegexSource(glob) {
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];
     if (c === '*' && glob[i + 1] === '*') {
-      out += '.*';
       i++;
-      if (glob[i + 1] === '/') i++;
+      if (glob[i + 1] === '/') {
+        // `**/` = zero or more WHOLE directory segments. Consuming the `/`
+        // into a bare `.*` (the old behavior) let `**/.env.*` match
+        // "my.env.txt" and `**/src/**` match "/etc/mysrc/evil" (F12).
+        out += '(?:.*/)?';
+        i++;
+      } else {
+        out += '.*';
+      }
     } else if (c === '*') {
       out += '[^/]*';
     } else if (c === '?') {

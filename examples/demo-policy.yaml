@@ -9,8 +9,8 @@ filesystem:
     - "~/.aws/**"
     - "~/.aws/credentials"
   warn:
-    - ".env"
-    - ".env.*"
+    - "**/.env"
+    - "**/.env.*"
 
 shell:
   allowed:

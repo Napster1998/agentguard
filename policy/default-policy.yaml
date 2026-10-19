@@ -22,9 +22,13 @@ filesystem:
 
   # WARN, risk MEDIUM. Often legitimately read by tooling/tests, so a hard
   # block would break normal dev workflows — but worth surfacing.
+  # NOTE: a bare ".env" only matches that exact relative string. Tool calls
+  # use ./.env, absolute paths (the MCP filesystem server requires them),
+  # Windows paths, and .env.local-style variants, so these need the "**/"
+  # prefix to fire in practice (F11 in SECURITY-ASSESSMENT.md).
   warn:
-    - ".env"
-    - ".env.*"
+    - "**/.env"
+    - "**/.env.*"
     - "**/credentials.json"
     - "**/secrets.yaml"
 
