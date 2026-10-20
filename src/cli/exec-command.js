@@ -3,9 +3,10 @@ import yaml from 'js-yaml';
 
 import { applyDefaults } from '../core/policy-engine.js';
 import { runExec } from '../adapters/shell/exec-wrapper.js';
+import { USAGE } from './help.js';
 
 function usage() {
-  process.stderr.write('Usage: agentguard exec --policy <policy.yaml> [--log <file>] -- <command> [args...]\n');
+  process.stderr.write(`Usage: ${USAGE.exec}\nRun "agentguard exec --help" for details.\n`);
 }
 
 function parseArgs(argv) {

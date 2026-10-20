@@ -45,9 +45,13 @@ error (EACCES), don't use `sudo`: skip it and use `node bin/agentguard.js`.
 ## 2. Look first (changes nothing)
 
 ```bash
+agentguard --help
 agentguard scan
 agentguard wrap
 ```
+
+`agentguard --help` lists every command; `agentguard <command> --help` explains
+one (for example `agentguard wrap --help`).
 
 `wrap` with no options is a **preview**. It lists every app and MCP server it
 found, says what it would change, and changes nothing. It never prints your

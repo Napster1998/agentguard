@@ -55,9 +55,10 @@ test('agentguard exec blocks a denied command with a non-zero exit and no output
   );
 });
 
-test('agentguard with no subcommand prints usage and exits 0', async () => {
-  const { stderr } = await execFileAsync(process.execPath, [CLI]);
-  assert.match(stderr, /Usage: agentguard/);
+test('agentguard with no subcommand prints help (to stdout, the convention for help) and exits 0', async () => {
+  const { stdout, stderr } = await execFileAsync(process.execPath, [CLI]);
+  assert.match(stdout, /Usage: agentguard <command>/);
+  assert.equal(stderr, '');
 });
 
 test('agentguard gateway subcommand proxies a real tools/call the same way agentguard-gateway.js does', async () => {

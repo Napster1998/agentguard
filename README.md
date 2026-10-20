@@ -521,6 +521,7 @@ To protect the MCP servers **already configured** in the AI apps on a machine
 hand-editing JSON — see [docs/TESTER-GUIDE.md](docs/TESTER-GUIDE.md):
 
 ```bash
+node bin/agentguard.js --help          # every command; `<command> --help` explains one
 node bin/agentguard.js wrap            # PREVIEW: what would change; changes nothing
 node bin/agentguard.js wrap --apply    # back up each config, then wrap its servers
 node bin/agentguard.js status          # what is protected, what is not, and why

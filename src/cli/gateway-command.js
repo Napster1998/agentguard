@@ -5,11 +5,10 @@ import yaml from 'js-yaml';
 import { applyDefaults } from '../core/policy-engine.js';
 import { startProxy } from '../adapters/mcp/proxy.js';
 import { SpawnRefusal } from '../adapters/host/spawn-target.js';
+import { USAGE } from './help.js';
 
 function usage() {
-  process.stderr.write(
-    'Usage: agentguard gateway --policy <policy.yaml> [--log <file>] [--server-name <name>] -- <command> [args...]\n'
-  );
+  process.stderr.write(`Usage: ${USAGE.gateway}\nRun "agentguard gateway --help" for details.\n`);
 }
 
 function parseArgs(argv) {

@@ -1,22 +1,13 @@
 import path from 'node:path';
 
 import { bold } from '../core/colors.js';
+import { commandHelp } from './help.js';
 import { listProcesses as defaultListProcesses } from '../adapters/host/process-list.js';
 import { buildContext, selectTargets, planAll, applyPlan, hasChanges, policyMissing } from '../adapters/wrap/orchestrate.js';
 
 const RULE = '─'.repeat(40);
 
-function usage(mode) {
-  return (
-    `Usage: agentguard ${mode} [--apply] [--client <id>]... [--config <file>]... [--project <dir>]\n` +
-    `  (no --apply)    preview only: shows exactly what would change, changes nothing\n` +
-    `  --apply         ${mode === 'wrap' ? 'back up, then wrap every supported MCP server' : 'restore every wrapped MCP server to its original command'}\n` +
-    `  --client <id>   only this client: claude-desktop, antigravity, claude-code-project\n` +
-    `  --config <file> a JSON file with an "mcpServers" section for an app not on the list\n` +
-    `                  (when given, ONLY these files are considered)\n` +
-    `  --project <dir> look for a project .mcp.json in <dir> instead of the current folder\n`
-  );
-}
+const usage = (mode) => commandHelp(mode);
 
 function parseArgs(argv) {
   const opts = { apply: false, clientIds: [], configFiles: [], project: null, help: false, error: null };
