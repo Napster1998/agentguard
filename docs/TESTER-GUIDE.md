@@ -42,6 +42,15 @@ Without `npm link`, replace `agentguard` below with `node bin/agentguard.js`
 (run from the `agentguard` folder). If `npm link` fails with a permissions
 error (EACCES), don't use `sudo`: skip it and use `node bin/agentguard.js`.
 
+**Windows PowerShell:** if `npm` (or later `agentguard`) fails with *"running
+scripts is disabled on this system"*, that is Windows' default policy blocking
+npm's `.ps1` launcher. It is not a problem with AgentGuard or with your install.
+Use `npm.cmd` instead of `npm` (`npm.cmd install`, `npm.cmd test`,
+`npm.cmd link`) and `agentguard.cmd` instead of `agentguard`, or run everything
+in **Command Prompt**, where it does not happen. (Changing PowerShell's
+execution policy also fixes it, but that is a security setting on your account,
+so it is your call, not something this guide asks you to do.)
+
 ## 2. Look first (changes nothing)
 
 ```bash
