@@ -1,0 +1,35 @@
+# Policy for AgentGuard wrapped around the Burp Suite MCP bridge as used by
+# Google Antigravity. Burp tools legitimately talk to arbitrary targets, so
+# network.allowed_domains lists only loopback: every other destination a
+# tool call names produces a WARN (visible in `agentguard events`), not a
+# BLOCK. Secrets in arguments are blocked. See SECURITY-ASSESSMENT.md F10 for
+# what network visibility does and does not cover.
+filesystem:
+  allow: []
+  deny:
+    - "~/.ssh/**"
+    - "~/.aws/**"
+  warn:
+    - "**/.env"
+    - "**/.env.*"
+
+shell:
+  allowed: [git, npm]
+  deny: [rm]
+  block_interpreter_eval: true
+
+mcp:
+  allowed_servers:
+    - burpsuite
+
+network:
+  allowed_domains:
+    - 127.0.0.1
+    - localhost
+
+secrets:
+  block_exfiltration: true
+
+mcp_response_inspection:
+  block_on_secret_pattern: true
+  block_on_suspicious_instruction: false
