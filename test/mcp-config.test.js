@@ -63,7 +63,7 @@ test('never executes the discovered command — only parses config', () => {
 test('knownConfigLocations includes the Antigravity global MCP config on every platform', async () => {
   const { knownConfigLocations } = await import('../src/adapters/discovery/mcp-config.js');
   for (const platform of ['win32', 'darwin', 'linux']) {
-    const locations = knownConfigLocations({ cwd: '/proj', platform, homedir: '/home/u' });
+    const locations = knownConfigLocations({ cwd: '/proj', platform, homedir: '/home/u', env: {}, readdir: () => [], exists: () => false });
     assert.ok(
       locations.some((l) => l.replaceAll('\\', '/').endsWith('/home/u/.gemini/config/mcp_config.json')),
       `missing on ${platform}`

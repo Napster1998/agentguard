@@ -25,9 +25,10 @@ export const USAGE = {
 };
 
 const DETAIL = {
-  wrap: `Finds the MCP servers configured in your AI apps (Claude Desktop, Google
-Antigravity, a project's .mcp.json) and rewrites each local one to run through
-AgentGuard. With no --apply it only PREVIEWS: it changes nothing.
+  wrap: `Finds the MCP servers configured in your AI apps (Claude Desktop, including
+a Windows Microsoft Store install, Google Antigravity, a project's .mcp.json)
+and rewrites each local one to run through AgentGuard. With no --apply it only
+PREVIEWS: it changes nothing.
 
   --apply          back up each config file, then make the change. Restart the
                    AI app afterwards.

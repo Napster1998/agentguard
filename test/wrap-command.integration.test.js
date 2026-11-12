@@ -1,6 +1,6 @@
 // End-to-end tests of `agentguard wrap | status | unwrap` as real subprocesses.
 // Every test runs inside a SANDBOX: a throwaway fake home directory (HOME,
-// USERPROFILE, APPDATA, AGENTGUARD_HOME all point into it), so these tests
+// USERPROFILE, APPDATA, LOCALAPPDATA, AGENTGUARD_HOME all point into it), so these tests
 // can never read or modify a real user's client configs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,6 +31,9 @@ function sandbox() {
     HOME: home,
     USERPROFILE: home,
     APPDATA: path.join(home, 'AppData', 'Roaming'),
+    // A Windows Store Claude Desktop keeps its config under LOCALAPPDATA; leaving
+    // the real one inherited would let these tests find, and edit, the real file.
+    LOCALAPPDATA: path.join(home, 'AppData', 'Local'),
     AGENTGUARD_HOME: path.join(home, '.agentguard'),
   };
   assert.notEqual(path.resolve(home), path.resolve(realHome), 'sandbox must never be the real home');
@@ -183,6 +186,44 @@ test('an empty config (a freshly installed app) is "no servers", and wrap leaves
     const r = await sb.run(['wrap', '--apply']);
     assert.match(r.stdout, /no MCP servers configured/);
     assert.equal(fs.readFileSync(sb.clients['antigravity'], 'utf8'), '');
+  } finally {
+    sb.cleanup();
+  }
+});
+
+// The CLI reads the real process.platform, so the Store layout only exists on Windows.
+test('a Windows Store Claude Desktop (live config under LOCALAPPDATA) is found, flagged as a duplicate, wrapped, and restored byte for byte', { skip: process.platform !== 'win32' }, async () => {
+  const sb = sandbox();
+  try {
+    const store = path.join(sb.home, 'AppData', 'Local', 'Claude-Data', 'claude_pkgabc', 'claude_desktop_config.json');
+    sb.put(sb.clients['claude-desktop'], { mcpServers: { burp: server } }); // stale copy at the usual path
+    sb.put(store, { mcpServers: { burp: server, files: server }, preferences: { x: 1 } }); // the live one
+    const files = [sb.clients['claude-desktop'], store];
+    const before = Object.fromEntries(files.map((f) => [f, sha(f)]));
+
+    const status = await sb.run(['status']);
+    assert.match(status.stdout, /Claude Desktop \(Microsoft Store install\)/);
+    assert.ok(status.stdout.includes(store), 'status shows the Store path');
+    assert.match(status.stdout, /Claude Desktop has 2 config files/);
+
+    const preview = await sb.run(['wrap']);
+    assert.ok(preview.stdout.includes(store));
+    for (const f of files) assert.equal(sha(f), before[f], 'preview wrote nothing');
+
+    // --client claude-desktop covers BOTH copies
+    const applied = await sb.run(['wrap', '--apply', '--client', 'claude-desktop']);
+    assert.equal(applied.code, 0, applied.stdout);
+    const liveNow = JSON.parse(fs.readFileSync(store, 'utf8'));
+    assert.equal(liveNow.mcpServers.burp.args[1], 'gateway');
+    assert.equal(liveNow.mcpServers.files.args[1], 'gateway');
+    assert.deepEqual(liveNow.preferences, { x: 1 }, 'other keys untouched');
+    assert.equal(JSON.parse(fs.readFileSync(sb.clients['claude-desktop'], 'utf8')).mcpServers.burp.args[1], 'gateway');
+
+    const after = await sb.run(['status']);
+    assert.match(after.stdout, /3 protected/);
+
+    await sb.run(['unwrap', '--apply', '--client', 'claude-desktop']);
+    for (const f of files) assert.equal(sha(f), before[f], 'unwrap restored the exact original bytes');
   } finally {
     sb.cleanup();
   }

@@ -10,8 +10,8 @@ import { clientConfigs } from './client-configs.js';
  * Antigravity's path (~/.gemini/config/mcp_config.json) is verified on real
  * Windows and macOS installs.
  */
-export function knownConfigLocations({ cwd = process.cwd(), platform = process.platform, homedir = os.homedir(), env = process.env } = {}) {
-  return clientConfigs({ cwd, platform, homedir, env }).map((c) => c.path);
+export function knownConfigLocations({ cwd = process.cwd(), platform = process.platform, homedir = os.homedir(), env = process.env, ...fsHooks } = {}) {
+  return clientConfigs({ cwd, platform, homedir, env, ...fsHooks }).map((c) => c.path);
 }
 
 /**

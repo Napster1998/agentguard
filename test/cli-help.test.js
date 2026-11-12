@@ -20,7 +20,7 @@ const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin',
 // an empty throwaway home, never the developer's real one.
 function sandboxEnv() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-help-'));
-  return { home, env: { ...process.env, HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData'), AGENTGUARD_HOME: path.join(home, '.agentguard') } };
+  return { home, env: { ...process.env, HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData'), LOCALAPPDATA: path.join(home, 'AppData', 'Local'), AGENTGUARD_HOME: path.join(home, '.agentguard') } };
 }
 
 async function run(args, env) {
@@ -129,9 +129,11 @@ test('drift guard: each command\'s help mentions every flag it really accepts', 
 });
 
 test('drift guard: wrap help lists exactly the client ids wrap really supports', () => {
-  const supported = clientConfigs().filter((c) => c.wrappable).map((c) => c.id);
+  // Hermetic: never look at the real machine's Store install.
+  const known = clientConfigs({ env: {}, readdir: () => [], exists: () => false });
+  const supported = known.filter((c) => c.wrappable).map((c) => c.id);
   for (const id of supported) assert.ok(commandHelp('wrap').includes(id), `${id} missing from wrap help`);
-  for (const c of clientConfigs().filter((x) => !x.wrappable)) {
+  for (const c of known.filter((x) => !x.wrappable)) {
     assert.ok(!commandHelp('wrap').split('\n').some((l) => l.includes('--client') && l.includes(c.id)), `${c.id} is not wrappable and must not be offered`);
   }
 });

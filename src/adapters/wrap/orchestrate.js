@@ -116,6 +116,43 @@ export function applyPlan(mode, plan, ctx) {
   return outcome;
 }
 
+/**
+ * Notes for `status` when one app has more than one config file on disk (a
+ * Windows Store Claude Desktop leaves a stale file at the usual path and keeps
+ * its live one elsewhere). The app reads only one of them, and we cannot tell
+ * which from here, so we say so and give the one fact that usually decides it:
+ * which was modified last. `statMtime` is injectable for tests.
+ */
+export function duplicateClientNotes(plan, { statMtime = (f) => fs.statSync(f).mtime } = {}) {
+  const notes = [];
+  const byId = new Map();
+  for (const t of plan) {
+    if (t.client.id === 'custom' || t.status === 'absent' || t.status === 'unparseable') continue;
+    byId.set(t.client.id, [...(byId.get(t.client.id) || []), t]);
+  }
+  for (const group of byId.values()) {
+    if (group.length < 2) continue;
+    const dated = group.map((t) => {
+      try {
+        return { t, mtime: statMtime(t.file) };
+      } catch {
+        return { t, mtime: null };
+      }
+    });
+    const newest = dated.filter((d) => d.mtime).sort((a, b) => b.mtime - a.mtime)[0];
+    notes.push(
+      `${group[0].client.label.replace(/ \(.*\)$/, '')} has ${group.length} config files on this machine, but the app reads only one of them.`
+    );
+    for (const { t, mtime } of dated) {
+      const when = mtime ? `modified ${mtime.toISOString().slice(0, 10)}` : 'modified date unknown';
+      const hint = newest && newest.t === t && dated.filter((d) => d.mtime).length > 1 ? ', most recently changed, so usually the one in use' : '';
+      notes.push(`    ${t.file}  (${t.client.label}; ${when}${hint})`);
+    }
+    notes.push('    Protect all of them to be safe (agentguard wrap --apply does), or check which one your app uses.');
+  }
+  return notes;
+}
+
 /** Wrapped-entry health for `status`: which wrapped entries would fail to start. */
 export function wrapperProblems(plan, ctx) {
   const problems = [];

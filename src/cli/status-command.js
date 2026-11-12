@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import yaml from 'js-yaml';
 
 import { bold } from '../core/colors.js';
-import { buildContext, selectTargets, planAll, wrapperProblems } from '../adapters/wrap/orchestrate.js';
+import { buildContext, selectTargets, planAll, wrapperProblems, duplicateClientNotes } from '../adapters/wrap/orchestrate.js';
 import { readEvents } from './events-command.js';
 
 const RULE = '─'.repeat(40);
@@ -71,6 +71,12 @@ export function formatStatus(plan, ctx) {
         lines.push(`    ⚠ ${s.name.padEnd(18)} NOT protected: ${s.reason}`);
       }
     }
+  }
+
+  const notes = duplicateClientNotes(plan);
+  if (notes.length) {
+    lines.push('', bold('Notes'));
+    for (const n of notes) lines.push(n.startsWith('    ') ? n : `  ⚠ ${n}`);
   }
 
   const problems = wrapperProblems(plan, ctx);

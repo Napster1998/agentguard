@@ -126,6 +126,14 @@ in the file alone. Restart the app again. (Your policy and audit log in
 - **Claude Code's own settings file is never edited**; the app rewrites it
   constantly and editing it risks your settings. `status` lists it as
   "not managed".
+- **Claude Desktop from the Microsoft Store (Windows) keeps its live config in a
+  different place**: `%LOCALAPPDATA%\Claude-Data\claude_<id>\claude_desktop_config.json`,
+  leaving a stale file at the usual `%APPDATA%\Claude\`. AgentGuard looks in both
+  and `wrap --apply` protects both. If `status` shows a **Notes** section saying
+  Claude Desktop has two config files, that is why; the app reads only one, and
+  the newer file is usually it. We found this layout on one machine and it is
+  not documented by Anthropic, so if Claude Desktop's tools are still not
+  protected after `wrap --apply` and a restart, tell us where its config is.
 - **A WARN is not visible in the AI app.** Only BLOCKs show up in the chat.
   Read warnings with `agentguard events`.
 - **The default policy is permissive.** Secrets in tool arguments and access to
@@ -149,6 +157,7 @@ in the file alone. Restart the app again. (Your policy and audit log in
 |---|---|
 | A tool shows as unavailable in the app after `wrap` | `agentguard status`, then read its "Problems" section. A moved or upgraded Node/AgentGuard install is fixed by re-running `agentguard wrap --apply`. |
 | `refusing to start ... through cmd.exe` (Windows) | A launcher argument contains `& \| < > ^ % "`. Use the underlying `.exe`, or remove the character. |
+| `wrap --apply` said it wrapped Claude Desktop, but its tools are not in `agentguard events` (Windows) | Run `agentguard status`: if it lists two Claude Desktop config files (Notes), the app may use the other one. Re-run `wrap --apply` (it covers both) and fully quit and reopen the app. |
 | An app you have installed shows as "not found" | AgentGuard only looks in the usual place. Find the app's MCP config file (a JSON file with an `mcpServers` section) and run `agentguard wrap --config <that file>`. Tell us the app and the path. |
 | `status` reports a missing policy file | `agentguard wrap --apply` recreates it (make sure you have pulled the latest code: `git pull`). |
 | Want everything back to normal right now | `agentguard unwrap --apply`, then restart the app. |
