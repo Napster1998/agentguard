@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { formatScanReport } from '../src/cli/scan-command.js';
 import { createPosture } from '../src/core/security-posture.js';
 import { createFinding, resetFindingCounters } from '../src/core/security-finding.js';
@@ -27,6 +29,24 @@ test('formatScanReport renders detected agents, MCP servers, and severity counts
   assert.match(report, /CRITICAL\s+1/);
   assert.match(report, /HIGH\s+1/);
   assert.match(report, /Overall: HIGH RISK/);
+});
+
+test('formatScanReport shows which config file each MCP server came from, home folder as ~', () => {
+  const home = os.homedir();
+  const posture = createPosture({
+    discoveredMcpServers: [
+      { name: 'in-home', trust: 'unknown', configLocation: path.join(home, '.claude.json') },
+      { name: 'elsewhere', trust: 'unknown', configLocation: path.join(path.parse(home).root, 'proj', '.mcp.json') },
+      { name: 'no-location', trust: 'unknown' },
+    ],
+  });
+  const lines = formatScanReport(posture).split('\n');
+  const at = (name) => lines.findIndex((l) => l.includes(name));
+
+  assert.equal(lines[at('in-home') + 1].trim(), path.join('~', '.claude.json'));
+  assert.ok(!lines.join('\n').includes(home), 'the real home path is not printed');
+  assert.equal(lines[at('elsewhere') + 1].trim(), path.join(path.parse(home).root, 'proj', '.mcp.json'));
+  assert.ok(!/\.json|~/.test(lines[at('no-location') + 1] ?? ''), 'no path line when the location is unknown');
 });
 
 test('formatScanReport handles an empty posture without crashing', () => {

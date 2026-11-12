@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import yaml from 'js-yaml';
 
 import { runScan } from '../adapters/discovery/scan.js';
@@ -24,6 +26,12 @@ function loadPolicy(policyPath) {
   if (!effective) return applyDefaults({});
   const raw = yaml.load(fs.readFileSync(effective, 'utf8'));
   return applyDefaults(raw);
+}
+
+/** Home folder shown as "~" (shorter, and leaves your username out of pasted output). */
+function displayPath(p, home = os.homedir()) {
+  if (home && (p === home || p.startsWith(home + path.sep))) return '~' + p.slice(home.length);
+  return p;
 }
 
 function severityIcon(severity) {
@@ -62,6 +70,8 @@ export function formatScanReport(posture) {
     for (const s of posture.discoveredMcpServers) {
       const icon = s.trust === 'trusted' ? '✓' : '⚠';
       lines.push(`${icon} ${s.name.padEnd(20)} ${s.trust.toUpperCase()}`);
+      // Where it is configured, so you can open the file and see (or remove) it.
+      if (s.configLocation) lines.push(`    ${displayPath(s.configLocation)}`);
     }
   }
 
