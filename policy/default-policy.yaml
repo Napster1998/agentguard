@@ -16,6 +16,13 @@ filesystem:
     - "~/.aws/credentials"
     - "~/.config/gcloud/**"
     - "~/.kube/**"
+    # Any .ssh or .aws folder, wherever it lives (a copy in Downloads, a project
+    # folder, a backup), not only the one in your home directory. Found in a
+    # live demo: "~/.aws/**" alone does not match /home/u/DemoFiles/.aws/credentials.
+    # Trade-off: a project that legitimately keeps its own ".aws" folder (for
+    # example SAM/CDK config) will be blocked too; remove the line if that is you.
+    - "**/.ssh/**"
+    - "**/.aws/**"
     - "**/id_rsa"
     - "**/id_ed25519"
     - "**/*.pem"

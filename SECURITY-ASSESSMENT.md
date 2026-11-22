@@ -1,6 +1,6 @@
 # AgentGuard Security Assessment (Phase 3.5)
 
-**Status:** Complete. 12 findings identified and reproduced with automated tests; 12 remediated (11 fully, 1 partially — see F5). All fixes have permanent regression tests. 192/192 tests passing (the count includes the Phase 5 onboarding tests, which add no security finding of their own). F1–F9 came from the Phase 3.5 red-team. **F10–F12 were found afterwards, by using the real thing**: F10 by running the gateway in front of a real third-party MCP server (Burp Suite); F11 on a real Mac with the official MCP filesystem server; F12 while verifying F11. Each was invisible to the unit tests that existed — a recurring lesson of this assessment.
+**Status:** Complete. 13 findings identified and reproduced with automated tests; 13 remediated (12 fully, 1 partially — see F5). All fixes have permanent regression tests. 218/218 tests passing (the count includes the Phase 5 onboarding tests, which add no security finding of their own). F1–F9 came from the Phase 3.5 red-team. **F10–F13 were found afterwards, by using the real thing**: F10 by running the gateway in front of a real third-party MCP server (Burp Suite); F11 on a real Mac with the official MCP filesystem server; F12 while verifying F11; F13 in a live demo on Linux. Each was invisible to the unit tests that existed — a recurring lesson of this assessment.
 
 ## Scope
 
@@ -123,6 +123,13 @@ Severity per the assessment's own scale (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL)
 **Scenario:** `**` compiled to `.*` and consumed the following `/`, so `**/.env.*` became `^.*\.env\..*$` — no requirement that `.env` begin a segment. On deny/warn lists this over-matched (`my.env.txt`, `notcredentials.json`): the safe direction, but real false positives. On an **allowlist** using a leading `**/` it **failed open**: `filesystem.allow: ["**/src/**"]` also treated `/etc/mysrc/evil` as inside the allowlist. The shipped default allowlist is empty and the documented examples do not use a leading `**/`, so this needed a policy author to write one — but it is a real fail-open in a security-critical matcher.
 **Reproduction:** `test/security-validation/f12-glob-segment-boundary.test.js`
 **Fix:** `**/` now compiles to `(?:.*/)?` — zero or more WHOLE directory segments. A mid-pattern `**/` (`a/**/b`) and a trailing `**` behave as before; all pre-existing tests, including the F4 traversal tests, still pass.
+
+### F13 — MEDIUM — Credential folders were protected only directly under the home directory — **FIXED**
+**Component:** `policy/default-policy.yaml` (policy *data*; the matcher was behaving correctly)
+**How it was found:** in a live demo on Linux with Google Antigravity and the official MCP filesystem server. A dummy credentials folder at `/home/<user>/DemoFiles/.aws/credentials` was read without any block, while the same read at `/home/<user>/.aws/credentials` was blocked.
+**Scenario:** the default denied `~/.ssh/**` and `~/.aws/**`, and `~` expands to the home directory, so only those two exact locations were covered. A copy of an SSH or AWS folder anywhere else (a backup, `Downloads`, a project folder, a restored old laptop) was ALLOWED. An agent that finds or is pointed at such a copy could read real credentials with no policy hit.
+**Reproduction:** `test/security-validation/f13-credential-folders-anywhere.test.js` — loads the SHIPPED default policy; it also pins the boundary (only whole directory names match, so `my.aws`, `.awsome` and `aws/` stay allowed).
+**Fix:** added `**/.ssh/**` and `**/.aws/**` (valid since F12 made `**/` a whole-segment match). The home-folder rules stay first, so existing example output is unchanged. **Trade-off, stated in the policy file:** a project that legitimately keeps its own `.aws` folder (SAM/CDK config) is blocked too. **Existing generated policies are not rewritten** (same caveat as F11): a `~/.agentguard/policy.yaml` created earlier needs these two lines added by hand.
 
 ### Informational (documented characteristics, not vulnerabilities)
 - Gateway/`agentguard exec` are not mandatory chokepoints — inherent to the architecture, now re-confirmed and clearly stated above.

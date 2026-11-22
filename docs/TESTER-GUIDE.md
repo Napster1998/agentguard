@@ -137,9 +137,13 @@ in the file alone. Restart the app again. (Your policy and audit log in
 - **A WARN is not visible in the AI app.** Only BLOCKs show up in the chat.
   Read warnings with `agentguard events`.
 - **The default policy is permissive.** Secrets in tool arguments and access to
-  paths like `~/.ssh` and `~/.aws` are blocked, but there is no network
+  any `.ssh` or `.aws` folder (wherever it is) are blocked, but there is no network
   allowlist until you add `network.allowed_domains` to
   `~/.agentguard/policy.yaml`.
+- **An existing `~/.agentguard/policy.yaml` is never overwritten.** A newer
+  AgentGuard's improved default rules reach only a fresh install. To pick them up,
+  compare it with `policy/default-policy.yaml` and copy the new lines in, or move
+  your policy aside and run `agentguard wrap --apply` to generate a fresh one.
 - **Only apps on AgentGuard's list are found, in their usual places.** For
   another app, or an install in an unusual location, whose config is a JSON file
   with an `mcpServers` section: `agentguard wrap --config <file>`.
