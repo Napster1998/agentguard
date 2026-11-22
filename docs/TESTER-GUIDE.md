@@ -26,7 +26,7 @@ You need **Node.js 20 or newer** and **git**. If you have neither:
 |---|---|
 | Windows (PowerShell) | `winget install OpenJS.NodeJS.LTS` and `winget install Git.Git`, then open a new terminal |
 | macOS | install [Homebrew](https://brew.sh), then `brew install node git` |
-| Linux (Debian/Ubuntu) | `sudo apt install -y git curl`, then `curl -fsSL https://deb.nodesource.com/setup_lts.x \| sudo -E bash -` and `sudo apt install -y nodejs` (we have not tested Linux ourselves) |
+| Linux (Debian/Ubuntu) | `sudo apt install -y git curl`, then `curl -fsSL https://deb.nodesource.com/setup_lts.x \| sudo -E bash -` and `sudo apt install -y nodejs` (verified end to end on one Linux machine with Google Antigravity; other distros and Claude Desktop on Linux are untested) |
 
 Then:
 
@@ -159,6 +159,7 @@ in the file alone. Restart the app again. (Your policy and audit log in
 | `refusing to start ... through cmd.exe` (Windows) | A launcher argument contains `& \| < > ^ % "`. Use the underlying `.exe`, or remove the character. |
 | `wrap --apply` said it wrapped Claude Desktop, but its tools are not in `agentguard events` (Windows) | Run `agentguard status`: if it lists two Claude Desktop config files (Notes), the app may use the other one. Re-run `wrap --apply` (it covers both) and fully quit and reopen the app. |
 | An app you have installed shows as "not found" | AgentGuard only looks in the usual place. Find the app's MCP config file (a JSON file with an `mcpServers` section) and run `agentguard wrap --config <that file>`. Tell us the app and the path. |
+| `events` shows a `DROP` line mentioning "could not be parsed as JSON-RPC" | A server printed something that was not a valid MCP message (Burp's proxy prints `kotlin-log...` lines). AgentGuard does not forward what it cannot inspect, so it dropped that line. No tool call was blocked, and the server keeps working. |
 | `status` reports a missing policy file | `agentguard wrap --apply` recreates it (make sure you have pulled the latest code: `git pull`). |
 | Want everything back to normal right now | `agentguard unwrap --apply`, then restart the app. |
 

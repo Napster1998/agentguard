@@ -87,6 +87,26 @@ test('--blocked shows only BLOCK-decision events', () => {
   assert.match(output, /r2/);
 });
 
+test('a dropped server line is shown as DROP (not BLOCK) and --blocked leaves it out; a malformed REQUEST stays BLOCK', () => {
+  const events = [
+    { sessionId: 's1', direction: 'response', decision: 'BLOCK', risk: 'MEDIUM', rule: 'malformed-json', timestamp: '2026-01-01T00:00:01.000Z', reason: 'Response line could not be parsed as JSON-RPC: kotlin-log' },
+    { sessionId: 's1', direction: 'request', decision: 'BLOCK', risk: 'HIGH', rule: 'malformed-json', timestamp: '2026-01-01T00:00:02.000Z', reason: 'Line could not be parsed as JSON-RPC (request side)' },
+    { sessionId: 's1', direction: 'request', decision: 'BLOCK', risk: 'CRITICAL', rule: 'secret', timestamp: '2026-01-01T00:00:03.000Z', toolName: 'base64_encode', resource: 'secret:aws-access-key-id', reason: 'real policy block' },
+  ];
+  const all = formatEvents(events);
+  const lineOf = (text, needle) => text.split('\n').find((l) => l.includes(needle));
+  const firstEvent = all.split('\n').find((l) => l.startsWith('00:00:01'));
+  assert.match(firstEvent, /DROP/);
+  assert.doesNotMatch(firstEvent, /BLOCK/);
+  assert.match(all, /not a blocked action/);
+  assert.match(all.split('\n').find((l) => l.startsWith('00:00:02')), /BLOCK/, 'request-side malformed line is still a BLOCK');
+  assert.match(lineOf(all, 'base64_encode'), /BLOCK/);
+
+  const blocked = formatEvents(events, { blockedOnly: true });
+  assert.ok(!blocked.includes('00:00:01'), '--blocked excludes the dropped server line');
+  assert.ok(blocked.includes('00:00:02') && blocked.includes('base64_encode'), '--blocked still shows every real BLOCK');
+});
+
 test('end-to-end: readEvents + formatEvents over a real temp log file', () => {
   const file = tempLogFile([
     { sessionId: 'abc', decision: 'WARN', risk: 'HIGH', timestamp: '2026-01-01T00:00:00.000Z', toolName: 'read_file', resource: 'filesystem:.env', reason: 'watched pattern' },

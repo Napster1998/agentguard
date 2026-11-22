@@ -19,6 +19,17 @@ function padColor(text, width, colorFn) {
   return colorFn(plain) + ' '.repeat(Math.max(1, width - plain.length));
 }
 
+/**
+ * A line a SERVER printed that was not valid JSON-RPC (typically a stray log
+ * line on stdout). The gateway drops it, fail-closed, because it cannot be
+ * inspected, and records it with decision BLOCK + rule "malformed-json".
+ * That is not a policy decision about anything the agent tried to do, so
+ * `events` shows it as DROP and `--blocked` leaves it out. (Unparseable
+ * REQUEST lines stay BLOCK: an agent sending something we cannot evaluate is
+ * a policy matter.) The log file itself is unchanged.
+ */
+export const isDroppedServerOutput = (e) => e.direction === 'response' && e.rule === 'malformed-json';
+
 function parseArgs(argv) {
   const opts = { logFile: null, sessionId: null, risk: null, blockedOnly: false };
   for (let i = 0; i < argv.length; i++) {
@@ -79,7 +90,7 @@ export function formatEvents(events, { sessionId, risk, blockedOnly } = {}) {
     sessionEvents.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
 
     const displayed = sessionEvents.filter((e) => {
-      if (blockedOnly && e.decision !== 'BLOCK') return false;
+      if (blockedOnly && (e.decision !== 'BLOCK' || isDroppedServerOutput(e))) return false;
       if (risk && e.risk !== risk) return false;
       return true;
     });
@@ -91,11 +102,12 @@ export function formatEvents(events, { sessionId, risk, blockedOnly } = {}) {
     lines.push(RULE);
     for (const e of displayed) {
       const time = formatTime(e.timestamp);
-      const decision = padColor(e.decision, DECISION_WIDTH, colorDecision);
+      const dropped = isDroppedServerOutput(e);
+      const decision = padColor(dropped ? 'DROP' : e.decision, DECISION_WIDTH, colorDecision);
       const risk = padColor(e.risk, RISK_WIDTH, colorRisk);
       const label = e.toolName || e.method || '';
       lines.push(`${time}  ${decision}${risk}${label}  ${e.resource || ''}`.trimEnd());
-      if (e.decision !== 'ALLOW') lines.push(`  reason: ${e.reason}`);
+      if (e.decision !== 'ALLOW') lines.push(`  reason: ${e.reason}${dropped ? ' (output from the server, not a blocked action)' : ''}`);
     }
 
     for (const d of detections) {

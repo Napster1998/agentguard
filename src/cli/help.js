@@ -61,7 +61,11 @@ session's events.
   --session <id>   only this session
   --risk <level>   only events with exactly this risk: LOW, MEDIUM, HIGH or CRITICAL
                    (a pattern spanning other levels is still reported)
-  --blocked        only BLOCK decisions`,
+  --blocked        only BLOCK decisions (not DROP lines)
+
+A DROP line is something a server printed that was not a valid MCP message
+(often a stray log line). It was not forwarded, because it could not be
+inspected; no tool call was blocked.`,
 
   scan: `Read-only assessment of this machine: which AI agents are running, which MCP
 servers are configured, whether anything is exposed beyond localhost, and
