@@ -119,6 +119,39 @@ in the file alone. Restart the app again. (Your policy and audit log in
 `~/.agentguard` are kept.) The exact original of each file is also in
 `~/.agentguard/backups/`.
 
+## 6. Google Antigravity: protect its built-in tools too (optional)
+
+`wrap` covers MCP servers. Antigravity's own tools (reading and writing files,
+the terminal) never go through an MCP server. `agentguard hooks` makes
+Antigravity ask AgentGuard before **every** tool call, terminal commands and
+MCP calls included.
+
+```bash
+agentguard hooks --global          # preview: changes nothing
+agentguard hooks --global --apply
+```
+
+You can use `--workspace <folder>` instead of `--global` to cover just one
+project. No restart is needed: it applies from the next tool call.
+
+`--apply` does the following:
+- creates `~/.agentguard/antigravity-policy.yaml`, a coding-agent profile:
+  read-only PowerShell commands are allowed, destructive ones (`Remove-Item`,
+  `Stop-Process`, ...) are blocked, and anything else runs with a WARN in
+  `agentguard events`;
+- self-tests the hook command;
+- adds one `"agentguard"` entry to `hooks.json`.
+
+To see it work, ask Antigravity: *"Use the terminal to show the contents of
+~/.aws/credentials"*. The agent gets `Blocked by AgentGuard policy: ...`, and
+`agentguard events` shows a BLOCK. Undo it with
+`agentguard hooks remove --global --apply`.
+
+Antigravity **blocks every tool call** if its hook is broken, for example
+after you move the agentguard folder or upgrade Node. Run `agentguard status`
+to check it. To recover, run `agentguard hooks ... --apply` again to repair
+it, or `agentguard hooks remove ... --apply` to take it out.
+
 ## Known limits: please read
 
 - **Remote (HTTP/SSE) MCP servers are not protected**, only local (stdio)
@@ -153,7 +186,14 @@ in the file alone. Restart the app again. (Your policy and audit log in
   An app update can also rewrite its own config and drop the protection;
   `status` shows it.
 - **It only sees traffic routed through it.** A server left unwrapped, or an
-  agent that runs shell commands directly, bypasses it.
+  agent that runs shell commands directly, bypasses it. With `agentguard hooks`
+  installed, Antigravity's own tools and terminal are covered too.
+- **The Antigravity hook is verified on Windows only.** On Linux and macOS its
+  terminal checks use a strict generic parser until a real test there.
+- **The Antigravity profile is strict about the terminal.** A command it cannot
+  read safely (a .NET method call, `Invoke-Expression`, a computed argument,
+  PowerShell 7-only syntax like `&&`) is blocked with a reason. Tell us which
+  ordinary commands got blocked.
 
 ## If something goes wrong
 
@@ -165,7 +205,9 @@ in the file alone. Restart the app again. (Your policy and audit log in
 | An app you have installed shows as "not found" | AgentGuard only looks in the usual place. Find the app's MCP config file (a JSON file with an `mcpServers` section) and run `agentguard wrap --config <that file>`. Tell us the app and the path. |
 | `events` shows a `DROP` line mentioning "could not be parsed as JSON-RPC" | A server printed something that was not a valid MCP message (Burp's proxy prints `kotlin-log...` lines). AgentGuard does not forward what it cannot inspect, so it dropped that line. No tool call was blocked, and the server keeps working. |
 | `status` reports a missing policy file | `agentguard wrap --apply` recreates it (make sure you have pulled the latest code: `git pull`). |
-| Want everything back to normal right now | `agentguard unwrap --apply`, then restart the app. |
+| Antigravity: every tool call says it was blocked by a hook, or "could not evaluate" | `agentguard status`, Antigravity hooks section. If it says the hook cannot start, run `agentguard hooks --global --apply` (or `--workspace ...`) to repair it, or `agentguard hooks remove --global --apply`. Both take effect at once. |
+| Antigravity: an ordinary terminal command is blocked | The reason says which rule. Commands you trust can be added to `shell.allowed` in `~/.agentguard/antigravity-policy.yaml`. |
+| Want everything back to normal right now | `agentguard unwrap --apply` (MCP servers) and `agentguard hooks remove --global --apply` (Antigravity hook); restart the app after unwrap. |
 
 ## What to send back
 

@@ -6,6 +6,7 @@
 export const COMMANDS = [
   { name: 'wrap', group: 'Protect this machine', summary: 'Route your AI apps\' MCP servers through AgentGuard (preview unless --apply)' },
   { name: 'unwrap', group: 'Protect this machine', summary: 'Undo wrap: restore every original entry (preview unless --apply)' },
+  { name: 'hooks', group: 'Protect this machine', summary: 'Install AgentGuard as a Google Antigravity hook: checks its built-in tools too (preview unless --apply)' },
   { name: 'status', group: 'Protect this machine', summary: 'Show what is protected, what is not, and why' },
   { name: 'events', group: 'See what happened', summary: 'Show the audit log: each ALLOW / WARN / BLOCK decision, and any risky pattern' },
   { name: 'scan', group: 'See what happened', summary: 'Assess this machine\'s AI-agent security posture (read-only)' },
@@ -18,6 +19,7 @@ export const COMMANDS = [
 export const USAGE = {
   wrap: 'agentguard wrap [--apply] [--client <id>]... [--config <file>]... [--project <dir>]',
   unwrap: 'agentguard unwrap [--apply] [--client <id>]... [--config <file>]... [--project <dir>]',
+  hooks: 'agentguard hooks [remove] (--workspace <dir> | --global) [--apply]',
   status: 'agentguard status [--project <dir>]',
   events: 'agentguard events [--log <file>] [--session <id>] [--risk <level>] [--blocked]',
   scan: 'agentguard scan [--policy <policy.yaml>] [--json]',
@@ -48,6 +50,25 @@ With no --apply it only PREVIEWS. Your policy and audit log are kept.
   --client <id>    only this app: claude-desktop, antigravity, claude-code-project
   --config <file>  a JSON file with an "mcpServers" section (only these files)
   --project <dir>  look for a project .mcp.json in <dir> instead of the current folder`,
+
+  hooks: `Installs AgentGuard as a Google Antigravity PreToolUse hook. Antigravity
+then asks AgentGuard before EVERY tool call: file reads and writes, terminal
+commands and MCP calls, not only MCP servers (that is what wrap covers). With
+no --apply it only PREVIEWS: it changes nothing.
+
+  --workspace <dir>  only that workspace (<dir>/.agents/hooks.json); the
+                     location verified in a real Antigravity
+  --global           every workspace (~/.gemini/config/hooks.json)
+  --apply            make the change: creates ~/.agentguard/antigravity-policy.yaml
+                     on first use (a coding-agent profile), runs the exact hook
+                     command once as a self-test, and only then adds one
+                     "agentguard" entry to hooks.json (other hooks are kept; the
+                     file is backed up first)
+  remove             take the "agentguard" entry out again (with --apply)
+
+No restart is needed: Antigravity re-reads hooks.json before each tool call.
+Antigravity BLOCKS a tool call if its hook fails, which is why the self-test
+runs first. If tools ever stop working, agentguard hooks remove ... --apply.`,
 
   status: `Read-only. For each AI app AgentGuard knows about, shows which MCP servers
 are protected, which are not and why, and any problem that would stop a

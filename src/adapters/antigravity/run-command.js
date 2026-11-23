@@ -35,7 +35,9 @@ import {
  *     (it reaches files and network with no command at all),
  *     Invoke-Expression / Add-Type (code given as text), or a computed argument
  *     to anything but a pipeline/formatting cmdlet.
- *  4. A file redirection target is a FILE_WRITE.
+ *  4. A file redirection target is a FILE_WRITE, whether it follows a command
+ *     or an expression ('x' > file); ${C:\path} variable syntax (reads or
+ *     writes a file with no command) is UNPARSEABLE.
  *  5. An interpreter with an inline-code flag (incl. powershell -enc / -co) is
  *     an interpreter-eval attempt (F2).
  *  6. A recursive search rooted at the home folder or above is flagged
@@ -77,11 +79,17 @@ const clip = (s, n = 60) => (s.length > n ? `${s.slice(0, n)}...` : s);
 function powerShellLineToActions(line, { cwd, context, shellPolicy, parsePowerShell = defaultParsePowerShell, homedir = os.homedir() }) {
   const parsed = parsePowerShell(line);
   if (!parsed.ok) return [unparseable(parsed.reason, context)];
-  const { errors, commands, methodCalls } = parsed.ast;
+  const { errors, commands, methodCalls, otherRedirections = [], driveVariables = [] } = parsed.ast;
   if (errors.length) return [unparseable(`a PowerShell syntax error ("${clip(errors[0])}")`, context)];
 
   const actions = [];
   for (const m of methodCalls) actions.push(unparseable(`a .NET method call (${clip(m)}), which can reach files and the network without any command`, context));
+  for (const v of driveVariables) actions.push(unparseable(`a file accessed through variable syntax (${clip(v)}), with no command`, context));
+  // A redirection after an expression ('x' > file), not attached to any command.
+  for (const r of otherRedirections) {
+    if (r.target?.k === 'lit') actions.push(createAction({ verb: 'write', resourceType: 'filesystem', resourceValue: resolveIn(cwd, r.target.v), context }));
+    else actions.push(unparseable(`a redirection to a computed target (${clip(r.target?.text || '?')})`, context));
+  }
 
   let dir = cwd;
   for (const cmd of commands) {

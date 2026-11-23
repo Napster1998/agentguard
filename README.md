@@ -225,7 +225,7 @@ by the agent, bypassing `agentguard exec`, or an MCP call made outside the
 gateway's stdio pipe, is invisible to AgentGuard. Neither is EDR, and neither
 claims host-level visibility.
 
-**Google Antigravity hooks (Phase 6, in progress): `agentguard hook antigravity`.**
+**Google Antigravity hooks (Phase 6): `agentguard hooks`, then `agentguard hook antigravity`.**
 Antigravity can run a command before every tool call (a `PreToolUse` hook) and
 obey its answer. AgentGuard answers `allow` or `deny` from the same policy, so
 the agent's **built-in** tools are covered, not only MCP servers.
@@ -267,9 +267,36 @@ On Linux and macOS the strict cross-shell parser (F16) is used until a real run
 there shows which shell Antigravity uses.
 
 Unknown tools are allowed with a WARN. Each Antigravity conversation is one
-session, so correlation works across its calls. There is no install command
-yet (step 6.4): the hook is configured by hand in a workspace's
-`.agents/hooks.json`.
+session, so correlation works across its calls.
+
+**Install** (preview first, like `wrap`):
+
+```bash
+agentguard hooks --global                # or: --workspace <folder>
+agentguard hooks --global --apply
+```
+
+`--apply` does three things, in this order:
+1. On first use it creates `~/.agentguard/antigravity-policy.yaml`, a copy of
+   `policy/antigravity-policy.yaml`. That is the default policy plus a
+   coding-agent terminal profile: read-only PowerShell commands allowed,
+   destructive ones denied, anything else WARN (`shell.unlisted: warn`). It
+   also adds **self-protection**: the agent cannot read or write `hooks.json`,
+   Antigravity's MCP config or `~/.agentguard`.
+2. It runs the exact hook command once, the way Antigravity runs it, as a
+   **self-test**. Antigravity blocks every tool call if its hook fails, so a
+   failing hook is never installed.
+3. It adds one `"agentguard"` entry to `hooks.json`. Other hooks are kept, and
+   the file is backed up first.
+
+There is no restart: Antigravity re-reads `hooks.json` before every tool
+call. `agentguard status` shows where the hook is installed, whether its
+command would start, its last decision, and tools it has no rule for. To
+undo it: `agentguard hooks remove --global --apply`.
+
+Both locations were verified in the real app: a workspace's
+`.agents/hooks.json`, and the global `~/.gemini/config/hooks.json`, which
+blocked a credentials read in a folder outside any project.
 
 `shell.deny` (new) is checked *before* `shell.allowed` and always wins, even
 for a binary also present in `allowed` — a second layer for commands that
@@ -578,7 +605,7 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 285 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 297 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper, wrap/unwrap/status (all with fake
                  # data sources or a sandboxed fake home where possible) + real
                  # end-to-end proxy/exec/CLI process spawns, plus 71 security-validation

@@ -137,7 +137,8 @@ test('formatStatus prints a Notes section for real duplicate files, and none for
     fs.writeFileSync(a, '{}');
     fs.writeFileSync(b, '{}');
     fs.utimesSync(a, new Date('2026-05-19'), new Date('2026-05-19'));
-    const ctx = { paths: { home: dir, policy: path.join(dir, 'no-policy.yaml'), audit: path.join(dir, 'no-audit.jsonl') } };
+    // homedir/cwd in the sandbox: the Hooks section must not read the real machine's hooks.json.
+    const ctx = { homedir: dir, cwd: dir, paths: { home: dir, policy: path.join(dir, 'no-policy.yaml'), audit: path.join(dir, 'no-audit.jsonl') } };
 
     const two = formatStatus(
       planOf([

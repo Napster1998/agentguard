@@ -1,0 +1,104 @@
+# AgentGuard policy for the Google Antigravity hook (agentguard hooks --apply
+# copies this to ~/.agentguard/antigravity-policy.yaml the first time).
+#
+# It is the shipped default policy (policy/default-policy.yaml; a test keeps
+# the two in sync) with three differences, because a coding agent's terminal
+# is used all the time:
+#   1. shell.allowed lists read-only PowerShell commands an agent uses to look
+#      around, plus git and npm;
+#   2. shell.deny adds destructive PowerShell commands, and shell.unlisted is
+#      "warn", so anything else runs and is logged while you tune the lists
+#      from `agentguard events` (set it to "block" for deny-by-default);
+#   3. filesystem.deny adds AgentGuard's OWN control files. Antigravity re-reads
+#      hooks.json before every tool call, so an agent able to edit it (or this
+#      policy) could switch AgentGuard off at once.
+# A missing setting falls back to the engine defaults (see README).
+
+filesystem:
+  allow: []
+
+  deny:
+    - "~/.ssh/**"
+    - "~/.aws/**"
+    - "~/.aws/credentials"
+    - "~/.config/gcloud/**"
+    - "~/.kube/**"
+    - "**/.ssh/**"
+    - "**/.aws/**"
+    - "**/id_rsa"
+    - "**/id_ed25519"
+    - "**/*.pem"
+    # Self-protection: the hook configuration, Antigravity's MCP server list
+    # (it says which servers go through the AgentGuard gateway) and
+    # AgentGuard's own folder (policies, audit log, backups).
+    - "**/.agents/hooks.json"
+    - "~/.gemini/config/hooks.json"
+    - "~/.gemini/config/mcp_config.json"
+    - "~/.agentguard/**"
+
+  warn:
+    - "**/.env"
+    - "**/.env.*"
+    - "**/credentials.json"
+    - "**/secrets.yaml"
+
+  recursive_search_from_home: warn
+
+shell:
+  # Antigravity runs terminal commands in PowerShell on Windows. A built-in
+  # alias counts as its command (ls = Get-ChildItem, rm/del = Remove-Item).
+  # File arguments of every command are still checked against filesystem.*.
+  allowed:
+    - git
+    - npm
+    - Get-ChildItem
+    - Get-Content
+    - Get-Item
+    - Get-Location
+    - Test-Path
+    - Select-Object
+    - Select-String
+    - Where-Object
+    - ForEach-Object
+    - Sort-Object
+    - Group-Object
+    - Measure-Object
+    - Format-Table
+    - Format-List
+    - Out-String
+    - Write-Output
+
+  deny:
+    - rm
+    - shutdown
+    - reboot
+    - Remove-Item
+    - Clear-Content
+    - Stop-Process
+    - Stop-Computer
+    - Restart-Computer
+    - Format-Volume
+    - Clear-Disk
+    - Set-ExecutionPolicy
+    - Invoke-Expression
+
+  block_interpreter_eval: true
+  block_unparseable_commands: true
+  unlisted: warn
+  unsandboxed: warn
+
+mcp:
+  # Empty = trust every MCP server Antigravity has. List names to WARN on others.
+  allowed_servers: []
+
+network:
+  # Empty = no restriction. Add domains to WARN on any other destination
+  # (in an MCP call's arguments or a terminal command's URL).
+  allowed_domains: []
+
+secrets:
+  block_exfiltration: true
+
+mcp_response_inspection:
+  block_on_secret_pattern: true
+  block_on_suspicious_instruction: false

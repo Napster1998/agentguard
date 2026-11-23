@@ -12,6 +12,10 @@ export function homePaths({ env = process.env, homedir = os.homedir() } = {}) {
   return {
     home,
     policy: path.join(home, 'policy.yaml'),
+    // The Antigravity hook's own policy (a coding-agent profile, see
+    // policy/antigravity-policy.yaml), kept separate so installing the hook
+    // never changes what the MCP gateway enforces.
+    antigravityPolicy: path.join(home, 'antigravity-policy.yaml'),
     audit: path.join(home, 'audit.jsonl'),
     backups: path.join(home, 'backups'),
   };

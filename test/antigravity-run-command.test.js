@@ -198,6 +198,9 @@ test('6.3 REAL parser: known bypass shapes are blocked', onWindows, () => {
     ['cmd /c type x', 'shell.block_interpreter_eval'],
     ['git log > .\\.ssh\\out.txt', 'filesystem.deny'],
     ['git log "unterminated', 'shell.block_unparseable_commands'],
+    // Found in 6.4: a redirection after an expression, and ${drive:path} file access.
+    ["'stolen' > .\\.ssh\\x", 'filesystem.deny'],
+    ['$k = ${C:\\Users\\dev\\.aws\\credentials}', 'shell.block_unparseable_commands'],
   ];
   for (const [line, rule] of cases) {
     const { output, event } = decide(line);

@@ -1,9 +1,59 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import yaml from 'js-yaml';
 
 import { bold } from '../core/colors.js';
 import { buildContext, selectTargets, planAll, wrapperProblems, duplicateClientNotes } from '../adapters/wrap/orchestrate.js';
 import { readEvents } from './events-command.js';
+import { hookLocations } from './hooks-command.js';
+import { buildHookCommand } from '../adapters/antigravity/hooks-config.js';
+
+const HOOK_MARK = { installed: '✓', stale: '⚠', disabled: '⚠', foreign: '⚠', unparseable: '⚠', none: '·', absent: '·' };
+const HOOK_TEXT = {
+  installed: 'protected (AgentGuard hook installed)',
+  stale: 'AgentGuard hook installed with different paths: run agentguard hooks ... --apply to repair',
+  disabled: 'AgentGuard hook present but "enabled": false, so NOT checking anything',
+  foreign: 'an "agentguard" entry that is not AgentGuard\'s hook',
+  unparseable: 'hooks.json is not valid JSON',
+  none: 'no AgentGuard hook',
+  absent: 'no hooks.json',
+};
+
+/**
+ * The Antigravity hook part of `status`: where it is installed, whether its
+ * command would start (a failing hook makes Antigravity block EVERY tool call),
+ * when it last ran, and which tools it has seen that it has no rule for.
+ */
+export function formatHooksSection(ctx, events) {
+  let command = null;
+  try {
+    command = buildHookCommand({ policyPath: ctx.paths.antigravityPolicy || '', logPath: ctx.paths.audit });
+  } catch {
+    /* unsafe install path: every location then reads as "stale" */
+  }
+  const locations = hookLocations({ workspace: ctx.cwd || process.cwd(), homedir: ctx.homedir || os.homedir(), command });
+  const lines = [bold('Antigravity hooks')];
+  for (const l of locations) lines.push(`${HOOK_MARK[l.state]} ${l.label}: ${HOOK_TEXT[l.state]}`, `    ${l.file}`);
+
+  const problems = [];
+  const active = locations.filter((l) => ['installed', 'stale', 'disabled'].includes(l.state));
+  for (const l of active) {
+    const quoted = [...(l.command || '').matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const missing = quoted.slice(0, 3).filter((p) => !fs.existsSync(p)); // node, agentguard.js, policy
+    if (missing.length && l.state !== 'disabled') {
+      problems.push(`${l.label}: the hook cannot start (missing ${missing.join(', ')}), so Antigravity will BLOCK every tool call. Run agentguard hooks ... --apply, or agentguard hooks remove ... --apply.`);
+    }
+  }
+  if (active.length > 1) problems.push('AgentGuard is installed globally AND in this workspace: every tool call is checked, and logged, twice.');
+
+  const mine = events.filter((e) => e.source === 'antigravity-hook');
+  const last = mine.map((e) => e.timestamp).filter(Boolean).sort().pop();
+  if (active.length) lines.push(`  last hook decision: ${last || 'none yet (it records the first tool call Antigravity makes)'}`);
+  const unknown = [...new Set(mine.flatMap((e) => [...String(e.resource || '').matchAll(/agent-tool:([\w.-]+)/g)].map((m) => m[1])))];
+  if (unknown.length) lines.push(`  tools without a rule (allowed with WARN): ${unknown.join(', ')}`);
+  for (const p of problems) lines.push(`  ⚠ ${p}`);
+  return { lines, problems };
+}
 
 const RULE = '─'.repeat(40);
 
@@ -72,6 +122,9 @@ export function formatStatus(plan, ctx) {
       }
     }
   }
+
+  const hooks = formatHooksSection(ctx, events);
+  lines.push('', ...hooks.lines);
 
   const notes = duplicateClientNotes(plan);
   if (notes.length) {

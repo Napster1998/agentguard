@@ -44,7 +44,11 @@ $commands = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Lang
   }
 })
 $methods = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] }, $true) | ForEach-Object { $_.Extent.Text })
-[pscustomobject]@{ errors = @($errors | ForEach-Object { $_.Message }); commands = $commands; methodCalls = $methods } | ConvertTo-Json -Depth 10 -Compress
+# Redirections not attached to a command (e.g. 'x' > file, after an expression).
+$otherRedirections = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FileRedirectionAst] -and -not ($n.Parent -is [System.Management.Automation.Language.CommandAst]) }, $true) | ForEach-Object { @{ append = $_.Append; target = (Enc $_.Location) } })
+# A drive-qualified variable such as {C:\path} after a dollar sign reads (or, assigned, writes) a FILE with no command at all.
+$driveVariables = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.VariablePath.IsDriveQualified -and ($n.VariablePath.DriveName -notin @('env', 'variable', 'function', 'alias')) }, $true) | ForEach-Object { $_.Extent.Text })
+[pscustomobject]@{ errors = @($errors | ForEach-Object { $_.Message }); commands = $commands; methodCalls = $methods; otherRedirections = $otherRedirections; driveVariables = $driveVariables } | ConvertTo-Json -Depth 10 -Compress
 `;
 
 const ENCODED = Buffer.from(SCRIPT, 'utf16le').toString('base64');
@@ -79,6 +83,8 @@ export function parsePowerShell(line, { timeoutMs = 6000, exe = 'powershell.exe'
         errors: toArray(ast.errors),
         commands: toArray(ast.commands).map(normalizeCommand),
         methodCalls: toArray(ast.methodCalls),
+        otherRedirections: toArray(ast.otherRedirections).map((r) => ({ ...r, target: normalizeElement(r.target) })),
+        driveVariables: toArray(ast.driveVariables),
       },
     };
   } catch {
