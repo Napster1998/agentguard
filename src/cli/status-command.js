@@ -48,6 +48,15 @@ export function formatHooksSection(ctx, events) {
 
   const mine = events.filter((e) => e.source === 'antigravity-hook');
   const last = mine.map((e) => e.timestamp).filter(Boolean).sort().pop();
+  // Every recent decision a rejection of Antigravity's input: the hook is
+  // blocking every tool call (found in Phase 6.5: Linux sends a different payload).
+  const recent = [...mine].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || '')).slice(-3);
+  if (recent.length && recent.every((e) => e.rule === 'malformed-hook-input')) {
+    const keys = recent.map((e) => e.metadata?.payloadKeys).find(Boolean);
+    problems.push(
+      `The hook's last ${recent.length} decision(s) all rejected Antigravity's input ("${String(recent[recent.length - 1].reason).slice(0, 120)}"), so Antigravity is blocking every tool call. Remove it (agentguard hooks remove ... --apply) and report this${keys ? `; fields received: ${keys.join(', ')}` : ''}.`
+    );
+  }
   if (active.length) lines.push(`  last hook decision: ${last || 'none yet (it records the first tool call Antigravity makes)'}`);
   const unknown = [...new Set(mine.flatMap((e) => [...String(e.resource || '').matchAll(/agent-tool:([\w.-]+)/g)].map((m) => m[1])))];
   if (unknown.length) lines.push(`  tools without a rule (allowed with WARN): ${unknown.join(', ')}`);

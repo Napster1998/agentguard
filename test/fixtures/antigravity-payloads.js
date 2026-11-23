@@ -21,6 +21,15 @@ let step = 0;
 export const preToolUse = (name, args) =>
   base('PreToolUse', { stepIdx: (step += 2), toolCall: { args, id: `toolu_${step}`, name } });
 
+/**
+ * The shape the Linux build of Antigravity sends (Phase 6.5), which matches the
+ * published docs: no `hookEventName`, no `cwd`.
+ */
+export function linuxShape(payload) {
+  const { hookEventName, cwd, ...rest } = payload;
+  return { ...rest, workspacePaths: ['/home/dev/DemoFiles'] };
+}
+
 export const sessionStart = () => base('SessionStart');
 export const stop = () =>
   base('Stop', { continuationActive: false, error: '', executionNum: 0, fullyIdle: true, terminationReason: 'NO_TOOL_CALL' });

@@ -44,7 +44,9 @@ export function buildHookCommand({ nodePath = process.execPath, scriptPath = SCR
   for (const p of [nodePath, scriptPath, policyPath, logPath]) {
     if (UNSAFE_PATH_CHARS.test(p)) throw new Error(`cannot install the hook: the path ${p} contains a " or %, which the hook command cannot quote safely`);
   }
-  return `"${nodePath}" --no-warnings "${scriptPath}" hook antigravity --policy "${policyPath}" --log "${logPath}"`;
+  // --event: the Linux build of Antigravity sends no hookEventName (Phase 6.5),
+  // and this command is only ever registered for PreToolUse.
+  return `"${nodePath}" --no-warnings "${scriptPath}" hook antigravity --event PreToolUse --policy "${policyPath}" --log "${logPath}"`;
 }
 
 export function buildGroup(command) {

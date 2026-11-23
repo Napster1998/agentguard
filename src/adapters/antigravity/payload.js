@@ -20,8 +20,9 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
  *            cwd: string|null, workspacePaths: string[], modelName: string|null, stepIdx: number|null}
  *          | {ok: false, reason: string, conversationId: string|null}}
  */
-export function parseHookPayload(raw) {
-  const fail = (reason, conversationId = null) => ({ ok: false, reason, conversationId });
+export function parseHookPayload(raw, { event: configuredEvent = null } = {}) {
+  let keys = null;
+  const fail = (reason, conversationId = null) => ({ ok: false, reason, conversationId, keys });
 
   if (typeof raw !== 'string' || raw.trim() === '') return fail('the hook received no input');
   if (Buffer.byteLength(raw, 'utf8') > MAX_PAYLOAD_BYTES) return fail('the hook input is larger than 1 MiB');
@@ -33,13 +34,20 @@ export function parseHookPayload(raw) {
     return fail(`the hook input is not valid JSON (${err.message})`);
   }
   if (!isPlainObject(p)) return fail('the hook input is not a JSON object');
+  // Field NAMES only (never values), so a new payload variant can be diagnosed from the log.
+  keys = Object.keys(p).sort();
 
+  // Which event this is. The Windows App sends `hookEventName`; the Linux build
+  // does not (found in Phase 6.5; the published docs do not list it either). So
+  // the installed command also states its event (`--event PreToolUse`): the
+  // payload's own name wins when present, else the configured one.
+  const event = typeof p.hookEventName === 'string' && p.hookEventName ? p.hookEventName : configuredEvent;
   const conversationId = typeof p.conversationId === 'string' && p.conversationId ? p.conversationId : null;
-  if (typeof p.hookEventName !== 'string' || !p.hookEventName) return fail('the hook input has no hookEventName', conversationId);
+  if (!event) return fail('the hook input has no hookEventName and the hook command names no --event', conversationId);
   if (!conversationId) return fail('the hook input has no conversationId');
 
   let toolCall = null;
-  if (p.hookEventName === 'PreToolUse') {
+  if (event === 'PreToolUse') {
     const tc = p.toolCall;
     if (!isPlainObject(tc) || typeof tc.name !== 'string' || tc.name === '') {
       return fail('a PreToolUse input has no tool name', conversationId);
@@ -48,14 +56,18 @@ export function parseHookPayload(raw) {
     toolCall = { name: tc.name, args: tc.args ?? {}, id: typeof tc.id === 'string' ? tc.id : null };
   }
 
+  const workspacePaths = Array.isArray(p.workspacePaths) ? p.workspacePaths.filter((w) => typeof w === 'string') : [];
   return {
     ok: true,
-    event: p.hookEventName,
+    event,
     conversationId,
     toolCall,
-    cwd: typeof p.cwd === 'string' && p.cwd ? p.cwd : null,
-    workspacePaths: Array.isArray(p.workspacePaths) ? p.workspacePaths.filter((w) => typeof w === 'string') : [],
+    // `cwd` is not sent everywhere either; the (first) workspace is what
+    // Antigravity runs commands in and resolves relative paths against.
+    cwd: typeof p.cwd === 'string' && p.cwd ? p.cwd : workspacePaths[0] || null,
+    workspacePaths,
     modelName: typeof p.modelName === 'string' ? p.modelName : null,
     stepIdx: Number.isInteger(p.stepIdx) ? p.stepIdx : null,
+    keys,
   };
 }

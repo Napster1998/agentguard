@@ -24,10 +24,10 @@ export const deny = (reason) => ({ decision: 'deny', reason });
  *
  * @returns {{output: object, event: object|null}}
  */
-export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () => false, parsePowerShell, platform, homedir }) {
-  const parsed = parseHookPayload(raw);
+export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () => false, parsePowerShell, platform, homedir, event: configuredEvent = null }) {
+  const parsed = parseHookPayload(raw, { event: configuredEvent });
   if (!parsed.ok) {
-    const event = recordFailure(logger, parsed.conversationId, `Hook input rejected: ${parsed.reason}.`);
+    const event = recordFailure(logger, parsed.conversationId, `Hook input rejected: ${parsed.reason}.`, null, { payloadKeys: parsed.keys });
     return { output: deny(`AgentGuard could not evaluate this call: ${parsed.reason}.`), event };
   }
 
@@ -110,7 +110,7 @@ export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () =
 }
 
 /** Records a call AgentGuard could not evaluate (and is therefore denying). */
-export function recordFailure(logger, conversationId, reason, toolName = null) {
+export function recordFailure(logger, conversationId, reason, toolName = null, metadata = null) {
   const event = createSecurityEvent({
     sessionId: conversationId || 'antigravity-unidentified',
     agentId: AGENT_ID,
@@ -121,6 +121,7 @@ export function recordFailure(logger, conversationId, reason, toolName = null) {
     risk: RISK.HIGH,
     rule: 'malformed-hook-input',
     reason: `${reason} Denied rather than allowed unevaluated.`,
+    metadata: metadata && Object.values(metadata).some((v) => v != null) ? metadata : null,
   });
   try {
     logger.log(event);

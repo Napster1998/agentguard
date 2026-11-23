@@ -13,10 +13,11 @@ import { USAGE } from './help.js';
 const DEFAULT_DEADLINE_MS = 8000;
 
 function parseArgs(argv) {
-  const opts = { adapter: argv[0], policyPath: null, logFile: null, deadlineMs: DEFAULT_DEADLINE_MS };
+  const opts = { adapter: argv[0], policyPath: null, logFile: null, deadlineMs: DEFAULT_DEADLINE_MS, event: null };
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '--policy') opts.policyPath = argv[++i];
     else if (argv[i] === '--log') opts.logFile = argv[++i];
+    else if (argv[i] === '--event') opts.event = argv[++i] || null;
     else if (argv[i] === '--deadline-ms') opts.deadlineMs = Number(argv[++i]) || DEFAULT_DEADLINE_MS;
   }
   return opts;
@@ -100,6 +101,7 @@ export async function runHookCommand(argv, { stdin = process.stdin, stdout = pro
     const { output } = handleHookInput(raw, {
       engine: new PolicyEngine(policy),
       logger,
+      event: opts.event,
       isMcpServerWrapped: antigravityWrappedServers(),
     });
     answer(output);

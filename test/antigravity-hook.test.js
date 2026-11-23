@@ -221,6 +221,29 @@ test('events: session = the Antigravity conversation, no prompt text, no transcr
   assert.ok(!text.includes('transcript_full'));
 });
 
+test('Linux payload shape (no hookEventName, no cwd): the configured --event is used, the workspace stands in for cwd', async () => {
+  const { linuxShape } = await import('./fixtures/antigravity-payloads.js');
+  const events = [];
+  const run2 = (p, event) => handleHookInput(JSON.stringify(p), { engine: shipped, logger: { log: (e) => events.push(e) }, event });
+  // Found in Phase 6.5: without --event, every call was denied as "no hookEventName".
+  assert.equal(run2(linuxShape(real.readFile('notes.txt')), 'PreToolUse').output.decision, 'allow');
+  const denied = run2(linuxShape(real.readFile('.aws/credentials')), 'PreToolUse');
+  assert.equal(denied.output.decision, 'deny');
+  assert.equal(denied.event.rule, 'filesystem.deny');
+  assert.ok(denied.event.resource.includes('/home/dev/DemoFiles/.aws/credentials'), 'relative path resolved against workspacePaths[0]');
+  // The payload's own event name still wins when it is there.
+  assert.deepEqual(run2(sessionStart(), 'PreToolUse').output, {});
+});
+
+test('a rejected payload records its field NAMES (never values), so a new variant can be diagnosed from the log', async () => {
+  const { linuxShape } = await import('./fixtures/antigravity-payloads.js');
+  const r = run(linuxShape(real.readFile()));
+  assert.equal(r.output.decision, 'deny');
+  assert.match(r.output.reason, /no hookEventName and the hook command names no --event/);
+  assert.ok(r.events[0].metadata.payloadKeys.includes('toolCall'));
+  assert.ok(!JSON.stringify(r.events[0]).includes('typed prompt'), 'names only');
+});
+
 test('other lifecycle events are acknowledged with {} and not logged', () => {
   for (const p of [sessionStart(), stop()]) {
     const r = run(p);

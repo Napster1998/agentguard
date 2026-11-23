@@ -94,8 +94,13 @@ test('--apply: creates the policy, self-tests, writes one "agentguard" group, an
     assert.equal(JSON.parse(denied.out).decision, 'deny');
     const allowed = await runInstalledHook(command, real.readFile(path.join(s.workspace, 'README.md')));
     assert.deepEqual(JSON.parse(allowed.out), { decision: 'allow' });
+    // The Linux build's payload (no hookEventName, no cwd) works with the installed command (Phase 6.5).
+    const { linuxShape } = await import('./fixtures/antigravity-payloads.js');
+    const linux = await runInstalledHook(command, linuxShape(real.readFile('.aws/credentials')));
+    assert.equal(JSON.parse(linux.out).decision, 'deny', linux.out);
     const audit = fs.readFileSync(path.join(s.agHome, 'audit.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
-    assert.deepEqual(audit.map((e) => e.decision), ['BLOCK', 'ALLOW'], 'both decisions in the shared audit log; the self-test logged nothing');
+    assert.deepEqual(audit.map((e) => e.decision), ['BLOCK', 'ALLOW', 'BLOCK'], 'decisions in the shared audit log; the self-test logged nothing');
+    assert.equal(audit[2].rule, 'filesystem.deny', 'denied for the right reason, not as malformed input');
 
     const again = cli(['hooks', '--workspace', s.workspace, '--apply'], s.env);
     assert.match(again.stdout, /already installed/);
@@ -235,6 +240,21 @@ test('the installed hook stays silent on stderr even when Node would warn (NO_CO
     assert.equal(code, 0);
     assert.deepEqual(JSON.parse(out.trim()), { decision: 'allow' });
     assert.equal(err, '', 'nothing for Antigravity to show the model');
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('status warns loudly when the hook keeps rejecting Antigravity\'s input (it then blocks every tool call)', async () => {
+  const s = sandbox();
+  try {
+    fs.mkdirSync(s.agHome, { recursive: true });
+    const bad = (t) => ({ id: t, sessionId: 'c', source: 'antigravity-hook', timestamp: `2026-11-23T21:08:0${t}Z`, decision: 'BLOCK', rule: 'malformed-hook-input', reason: 'Hook input rejected: the hook input has no hookEventName.', metadata: { payloadKeys: ['conversationId', 'toolCall'] } });
+    fs.writeFileSync(path.join(s.agHome, 'audit.jsonl'), [1, 2, 3].map((t) => JSON.stringify(bad(t))).join('\n') + '\n');
+    cli(['hooks', '--workspace', s.workspace, '--apply'], s.env);
+    const status = cli(['status', '--project', s.workspace], s.env).stdout;
+    assert.match(status, /all rejected Antigravity's input .* blocking every tool call/);
+    assert.match(status, /fields received: conversationId, toolCall/);
   } finally {
     s.cleanup();
   }

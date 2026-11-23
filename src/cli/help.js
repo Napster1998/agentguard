@@ -25,7 +25,7 @@ export const USAGE = {
   scan: 'agentguard scan [--policy <policy.yaml>] [--json]',
   gateway: 'agentguard gateway --policy <policy.yaml> [--log <file>] [--server-name <name>] -- <command> [args...]',
   exec: 'agentguard exec --policy <policy.yaml> [--log <file>] -- <command> [args...]',
-  hook: 'agentguard hook antigravity --policy <policy.yaml> [--log <file>] [--deadline-ms <ms>]',
+  hook: 'agentguard hook antigravity --policy <policy.yaml> [--log <file>] [--event <name>] [--deadline-ms <ms>]',
 };
 
 const DETAIL = {
@@ -126,6 +126,9 @@ reason) on stdout. Not meant to be typed by hand.
   --policy <file>     policy to enforce (required; if missing or invalid, every
                       call is denied with a reason, never allowed unchecked)
   --log <file>        where to write the audit log (agentguard events reads it)
+  --event <name>      the hook event this command is registered for, used when
+                      Antigravity's input does not name it (its Linux build does
+                      not); agentguard hooks writes --event PreToolUse
   --deadline-ms <ms>  answer deny if a decision takes longer (default 8000; keep
                       the hook timeout in hooks.json above it)
 
