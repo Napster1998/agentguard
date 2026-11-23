@@ -15,20 +15,35 @@ import { colorDecision, colorRisk } from './colors.js';
  * write flushes), and log() is called at most once per tool call, not in a
  * hot loop, so the synchronous cost is negligible.
  */
+// What the first line of the human mirror says, per adapter (event.source).
+const RECEIVED_LABEL = {
+  mcp: 'MCP request received',
+  'shell-exec': 'Command received',
+  'antigravity-hook': 'Antigravity tool call received',
+};
+
 export class AuditLogger {
-  constructor({ logFile } = {}) {
+  /**
+   * @param {object} [opts]
+   * @param {string} [opts.logFile]  JSONL file to append to
+   * @param {boolean} [opts.human=true]  also print the human-readable mirror to
+   *   stderr. Off for the Antigravity hook: Antigravity hands a hook's stderr to
+   *   the model (found in the Phase 6 spike), so the hook must stay silent.
+   */
+  constructor({ logFile, human = true } = {}) {
     this.logFile = logFile || null;
+    this.human = human;
   }
 
   log(event) {
     if (this.logFile) fs.appendFileSync(this.logFile, JSON.stringify(event) + '\n');
-    this.#printHuman(event);
+    if (this.human) this.#printHuman(event);
   }
 
   #printHuman(event) {
     const label = colorDecision(event.decision);
     const prefix = `[${label}]`;
-    process.stderr.write(`${prefix} MCP request received\n`);
+    process.stderr.write(`${prefix} ${RECEIVED_LABEL[event.source] || 'Request received'}\n`);
     if (event.toolName) process.stderr.write(`${prefix} Tool: ${event.toolName}\n`);
     if (event.resource) process.stderr.write(`${prefix} Target: ${event.resource}\n`);
     process.stderr.write(`${prefix} Policy decision: ${label}\n`);

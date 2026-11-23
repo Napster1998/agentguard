@@ -121,6 +121,7 @@ test('drift guard: each command\'s help mentions every flag it really accepts', 
     scan: ['--policy', '--json'],
     gateway: ['--policy', '--log', '--server-name'],
     exec: ['--policy', '--log'],
+    hook: ['--policy', '--log', '--deadline-ms'],
   };
   assert.deepEqual(Object.keys(flags).sort(), COMMANDS.map((c) => c.name).sort(), 'every command is covered here');
   for (const [name, list] of Object.entries(flags)) {

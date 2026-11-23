@@ -225,6 +225,32 @@ by the agent, bypassing `agentguard exec`, or an MCP call made outside the
 gateway's stdio pipe, is invisible to AgentGuard. Neither is EDR, and neither
 claims host-level visibility.
 
+**Google Antigravity hooks (Phase 6, in progress): `agentguard hook antigravity`.**
+Antigravity can run a command before every tool call (a `PreToolUse` hook) and
+obey its answer. AgentGuard answers `allow` or `deny` from the same policy, so
+the agent's **built-in** tools are covered, not only MCP servers.
+
+Proven in a validation spike in the real Antigravity App on Windows, with
+Claude and Gemini models:
+- a deny stops the tool before it runs, in every permission preset including
+  Turbo;
+- the hook runs before Antigravity's own approval prompt;
+- a hook that crashes, times out or prints garbage makes Antigravity block
+  the call.
+
+Checked today:
+- the target of `read_file` / `write_file` / `edit_file` (`filesystem` rules);
+- known secret patterns in **any** tool's arguments.
+
+Recorded but **not yet enforced**:
+- `run_command` (PowerShell parsing, step 6.3);
+- `call_mcp_tool` (step 6.2).
+
+Unknown tools are allowed with a WARN. Each Antigravity conversation is one
+session, so correlation works across its calls. There is no install command
+yet (step 6.4): the hook is configured by hand in a workspace's
+`.agents/hooks.json`.
+
 `shell.deny` (new) is checked *before* `shell.allowed` and always wins, even
 for a binary also present in `allowed` — a second layer for commands that
 should never run regardless of what else is permitted.
@@ -518,7 +544,7 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 239 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 260 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper, wrap/unwrap/status (all with fake
                  # data sources or a sandboxed fake home where possible) + real
                  # end-to-end proxy/exec/CLI process spawns, plus 67 security-validation

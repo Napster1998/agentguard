@@ -55,6 +55,17 @@ becomes an event that a separate correlation pass can reason about later.
                           └───────────────────┘
 ```
 
+**A third entry point (Phase 6, in progress): the Antigravity hook.**
+`agentguard hook antigravity` (`src/adapters/antigravity/`) is run *by*
+Google Antigravity before each tool call, as a `PreToolUse` hook. It turns the
+call into the same `Action`s, evaluates them with the same Policy Engine and
+answers `allow` or `deny`. A deny means the tool never runs.
+
+It covers the agent's built-in tools (file read/write/edit). `run_command` and
+`call_mcp_tool` are recorded but not yet enforced. As with the other two entry
+points, nothing it isn't asked about is seen: a tool call only reaches it if
+Antigravity's hook configuration routes it there.
+
 ## Two labels that matter more than the boxes
 
 **ENFORCEMENT BOUNDARY** (marked above): the MCP Gateway and `agentguard
@@ -97,5 +108,6 @@ the two are deliberately never merged into one number.
 | `SecurityFinding`, `SecurityPosture` | `src/core/security-finding.js`, `src/core/security-posture.js` |
 | MCP adapter (translate, proxy, response inspection) | `src/adapters/mcp/` |
 | Shell adapter (`agentguard exec`) | `src/adapters/shell/` |
+| Antigravity hook adapter (`agentguard hook antigravity`) | `src/adapters/antigravity/` |
 | Posture discovery (host primitives + orchestration) | `src/adapters/host/`, `src/adapters/discovery/` |
 | CLI commands | `src/cli/`, entrypoints in `bin/` |

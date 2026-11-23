@@ -25,7 +25,7 @@ function redactDeep(value) {
  *                                    when present); falls back to sessionId when
  *                                    it isn't — see README "Identity" limitation
  * @property {string} timestamp
- * @property {string} source       - 'mcp' | 'shell-exec' — which adapter produced this
+ * @property {string} source       - 'mcp' | 'shell-exec' | 'antigravity-hook' — which adapter produced this
  * @property {'request'|'response'} direction - a request-side decision, or an
  *                                    inspected MCP tool-call response
  * @property {string|null} actionType

@@ -11,6 +11,7 @@ export const COMMANDS = [
   { name: 'scan', group: 'See what happened', summary: 'Assess this machine\'s AI-agent security posture (read-only)' },
   { name: 'gateway', group: 'Lower level', summary: 'Run ONE MCP server behind the policy gateway (what wrap sets up for you)' },
   { name: 'exec', group: 'Lower level', summary: 'Run ONE shell command through the same policy; BLOCK means it never starts' },
+  { name: 'hook', group: 'Lower level', summary: 'Check ONE Antigravity tool call (run by Antigravity as a PreToolUse hook)' },
 ];
 
 /** One-line usage per command (also what a usage ERROR prints to stderr). */
@@ -22,6 +23,7 @@ export const USAGE = {
   scan: 'agentguard scan [--policy <policy.yaml>] [--json]',
   gateway: 'agentguard gateway --policy <policy.yaml> [--log <file>] [--server-name <name>] -- <command> [args...]',
   exec: 'agentguard exec --policy <policy.yaml> [--log <file>] -- <command> [args...]',
+  hook: 'agentguard hook antigravity --policy <policy.yaml> [--log <file>] [--deadline-ms <ms>]',
 };
 
 const DETAIL = {
@@ -94,6 +96,22 @@ are covered; it does not watch anything else on the machine.
   --policy <file>  policy to enforce (required)
   --log <file>     where to write the audit log
   --               everything after this is the command to run`,
+
+  hook: `Checks ONE Google Antigravity tool call against the policy. Antigravity runs
+this itself, as a PreToolUse hook command, before every tool call: it reads the
+call as JSON on stdin and prints one JSON answer ("allow" or "deny" with the
+reason) on stdout. Not meant to be typed by hand.
+
+  --policy <file>     policy to enforce (required; if missing or invalid, every
+                      call is denied with a reason, never allowed unchecked)
+  --log <file>        where to write the audit log (agentguard events reads it)
+  --deadline-ms <ms>  answer deny if a decision takes longer (default 5000)
+
+Checked now: files read or written by read_file / write_file / edit_file, and
+known secret patterns in any tool's arguments. run_command and call_mcp_tool
+are recorded but not yet enforced beyond that secret check. Any other tool is
+allowed with a WARN in the log. Nothing is written to stderr, because
+Antigravity shows a hook's stderr to the model.`,
 };
 
 export function mainHelp() {

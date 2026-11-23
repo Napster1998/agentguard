@@ -5,6 +5,7 @@ import { runEventsCommand } from '../src/cli/events-command.js';
 import { runExecCommand } from '../src/cli/exec-command.js';
 import { runWrapCommand } from '../src/cli/wrap-command.js';
 import { runStatusCommand } from '../src/cli/status-command.js';
+import { runHookCommand } from '../src/cli/hook-command.js';
 import { mainHelp, commandHelp, wantsHelp, USAGE } from '../src/cli/help.js';
 
 const [subcommand, ...rest] = process.argv.slice(2);
@@ -47,6 +48,9 @@ switch (subcommand) {
     break;
   case 'status':
     runStatusCommand(rest);
+    break;
+  case 'hook':
+    await runHookCommand(rest);
     break;
   default:
     process.stderr.write(`agentguard: unknown command "${subcommand}"\nRun "agentguard --help" for the list of commands.\n`);
