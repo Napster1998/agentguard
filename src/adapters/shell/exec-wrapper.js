@@ -5,43 +5,18 @@ import { PolicyEngine } from '../../core/policy-engine.js';
 import { AuditLogger } from '../../core/audit-logger.js';
 import { combineDecisions, VERDICT } from '../../core/decision.js';
 import { RISK } from '../../core/risk.js';
-import { createAction } from '../../core/action.js';
 import { createSecurityEvent } from '../../core/security-event.js';
-import { looksLikePath, findSecretMatches, isInterpreterEvalAttempt } from '../../core/resource-heuristics.js';
+import { argvToActions } from './argv-actions.js';
 
 const NO_ACTION_DECISION = { verdict: VERDICT.ALLOW, reason: 'No resources required policy evaluation.', risk: RISK.NONE, rule: null };
 
 /**
- * Translates a real, already-split argv into Actions. Unlike the MCP
- * adapter — which has to guess resource shapes out of a joined command
- * string or a JSON blob with unknown key names — this gets real argv: the
+ * Unlike the MCP adapter, which receives a command as text and has to split
+ * it (see argv-actions.js commandLineToActions), this gets real argv: the
  * binary is unambiguous, and each argument is evaluated on its own merits.
  */
 function execArgsToActions(command, args, context) {
-  const baseContext = { ...context, toolName: command, method: 'shell.exec' };
-  const actions = [createAction({ verb: 'execute', resourceType: 'shell', resourceValue: command, context: baseContext })];
-
-  if (isInterpreterEvalAttempt(command, args)) {
-    actions.push(
-      createAction({
-        verb: 'execute',
-        resourceType: 'interpreter-eval',
-        resourceValue: `${command} ${args.join(' ')}`,
-        context: baseContext,
-      })
-    );
-  }
-
-  for (const arg of args) {
-    if (looksLikePath(arg)) {
-      actions.push(createAction({ verb: 'read', resourceType: 'filesystem', resourceValue: arg, context: baseContext }));
-    }
-    for (const match of findSecretMatches(arg)) {
-      actions.push(createAction({ verb: 'transmit', resourceType: 'secret', resourceValue: match.name, context: baseContext }));
-    }
-  }
-
-  return actions;
+  return argvToActions(command, args, { ...context, toolName: command, method: 'shell.exec' });
 }
 
 /**

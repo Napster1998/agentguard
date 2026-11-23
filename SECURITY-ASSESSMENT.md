@@ -1,6 +1,6 @@
 # AgentGuard Security Assessment (Phase 3.5)
 
-**Status:** Complete. 13 findings identified and reproduced with automated tests; 13 remediated (12 fully, 1 partially — see F5). All fixes have permanent regression tests. 218/218 tests passing (the count includes the Phase 5 onboarding tests, which add no security finding of their own). F1–F9 came from the Phase 3.5 red-team. **F10–F13 were found afterwards, by using the real thing**: F10 by running the gateway in front of a real third-party MCP server (Burp Suite); F11 on a real Mac with the official MCP filesystem server; F12 while verifying F11; F13 in a live demo on Linux. Each was invisible to the unit tests that existed — a recurring lesson of this assessment.
+**Status:** Complete. 16 findings identified and reproduced with automated tests; 16 remediated (15 fully, 1 partially — see F5; F15 and F16 each keep a stated, pinned residual). All fixes have permanent regression tests. 239/239 tests passing (the count includes the Phase 5 onboarding tests, which add no security finding of their own). F1–F9 came from the Phase 3.5 red-team. **F10–F13 were found afterwards, by using the real thing**: F10 by running the gateway in front of a real third-party MCP server (Burp Suite); F11 on a real Mac with the official MCP filesystem server; F12 while verifying F11; F13 in a live demo on Linux. Each was invisible to the unit tests that existed — a recurring lesson of this assessment. **F14–F16 were found by reviewing the code against a new adapter's needs** (the Phase 6 Antigravity-hooks feasibility study): each showed up when a realistic input shape (a command line as one string, a folder instead of a file, a secret inside a path) was pushed through the existing modules.
 
 ## Scope
 
@@ -131,6 +131,31 @@ Severity per the assessment's own scale (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL)
 **Reproduction:** `test/security-validation/f13-credential-folders-anywhere.test.js` — loads the SHIPPED default policy; it also pins the boundary (only whole directory names match, so `my.aws`, `.awsome` and `aws/` stay allowed).
 **Fix:** added `**/.ssh/**` and `**/.aws/**` (valid since F12 made `**/` a whole-segment match). The home-folder rules stay first, so existing example output is unchanged. **Trade-off, stated in the policy file:** a project that legitimately keeps its own `.aws` folder (SAM/CDK config) is blocked too. **Existing generated policies are not rewritten** (same caveat as F11): a `~/.agentguard/policy.yaml` created earlier needs these two lines added by hand.
 
+### F14 — MEDIUM — Secret values reached the audit log through `agentguard exec` and path-shaped values — **FIXED**
+**Component:** `src/core/security-event.js` (fix), `src/core/resource-heuristics.js`; affected `src/adapters/shell/exec-wrapper.js` and `src/adapters/mcp/proxy.js`
+**How it was found:** during the Phase 6 feasibility review, by running a BLOCKed `agentguard exec -- git commit -m "key AKIAIOSFODNN7EXAMPLE"` and reading the log. The earlier claim ("secret values are never logged") had been verified for one gateway case only: a secret under a non-path key, which is recorded by pattern name.
+**Scenario:** three fields carried raw values into the JSONL log and the stderr mirror: `agentguard exec`'s `metadata.args` (the raw argv); the gateway's `resource` summary and `subDecisions` (every classified value verbatim, so a secret inside any argument that looks like a path, i.e. contains a `/`, was logged as part of a `filesystem:` value); and the interpreter-eval `reason`, which quotes the command line. The call itself was still BLOCKed; the problem was the record of it.
+**Reproduction:** `test/security-validation/f14-secret-values-in-audit-log.test.js` (exec argv, interpreter-eval reason, a real gateway process with a secret inside a path, and every field of an event including nested metadata).
+**Fix:** `createSecurityEvent` — the single place every adapter builds an event — now replaces every secret-pattern match in every string it records with `[REDACTED:<pattern name>]`. The surrounding text (the path, the command) stays readable. Evaluation is unchanged: it happens before the event is built, on the raw value. Putting this in the one shared constructor means a future adapter cannot reintroduce the leak by choosing a new field.
+**Residual risk:** redaction uses the same narrow secret patterns as detection; a secret those patterns do not recognize (an encoded key, an unusual token format) is neither blocked nor redacted. Log lines written before this fix are not rewritten.
+
+### F15 — MEDIUM — A denied folder itself was not covered by its own deny rule — **FIXED (residual stated)**
+**Component:** `src/core/glob-match.js`
+**How it was found:** during the Phase 6 feasibility review, by evaluating folder paths (what `list_dir`/`grep_search`-style tools take) against the shipped default policy.
+**Scenario:** `~/.aws/**` compiles to "`<home>/.aws/` followed by anything", so it matched every file inside the folder but not `<home>/.aws` or `<home>/.aws/` — both were ALLOWED. Any tool that takes a folder could list or search a denied credentials folder without a policy hit: today the official MCP filesystem server's `list_directory`, `directory_tree` and `search_files`; a grep-style tool would return file *contents*.
+**Reproduction:** `test/security-validation/f15-folder-targets.test.js` (folder forms on Windows and POSIX, `list_directory`/`directory_tree`/`search_files` through the MCP translator end to end, look-alike names, an allowlist folder).
+**Fix:** every value is also tried with a trailing `/`, so a pattern `X/**` covers the folder `X` itself. Only a pattern whose last segment can be empty gains from this: file patterns (`**/*.pem`) do not start matching folders, and look-alike names (`.awsome`, `my.aws`) still do not match. On an allowlist the same rule makes `./workspace` itself count as inside `./workspace/**` (it used to WARN); a sibling like `./workspace-evil` and traversal out of it still WARN.
+**Residual gap (kept as a passing test):** a search of a **parent** folder — e.g. a recursive search of the home directory — names nothing denied, so lexical path matching cannot know it will reach `~/.aws`. Whether it does depends on the tool (many search tools skip hidden folders); AgentGuard does not claim to judge it.
+
+### F16 — HIGH — A shell command given as one string was judged by its first word — **FIXED (residual stated)**
+**Component:** `src/adapters/mcp/translate.js`; fix in new `src/core/command-line.js`, new `src/adapters/shell/argv-actions.js`, `src/core/policy-engine.js`, `src/core/action.js`
+**How it was found:** during the Phase 6 feasibility review, by pushing realistic agent command lines through the MCP translator. No real shell-style MCP server had been used with AgentGuard yet (only fixtures), which is why this stayed latent.
+**Scenario:** for an MCP shell-style tool, the translator took `value.trim().split(/\s+/)[0]` as the binary and ignored the rest. With the default `shell.allowed: [git, npm]`: `git status && rm -rf ~/x` was **ALLOWED** (`rm` is in `shell.deny`), as were `npm test | sh` and `git log; curl ...` variants. `$(echo rm) -rf x` was BLOCKed only by accident (the "binary" was read as `$(echo`). A tool naming its key `CommandLine` (Antigravity's `run_command` does) got no shell check at all: `rm -rf x` was ALLOWED.
+**Reproduction:** `test/security-validation/f16-shell-command-strings.test.js`, plus parser unit tests in `test/command-line.test.js`.
+**Fix:** a deliberately strict parser that accepts only syntax POSIX sh, PowerShell and cmd.exe all read the same way (AgentGuard does not know which shell will run the line): plain words, whole-word single/double quotes without expanding characters, the separators `&& || ; & |`, and simple `> >> <` redirects. **Every** command it splits out goes through the same argv checks `agentguard exec` uses (binary allow/deny, interpreter-eval, path and secret checks per argument), and redirect targets are checked as file writes/reads. Anything else — `$`, backticks, wildcards, parentheses, braces, here-docs, process substitution, line breaks, a leading `VAR=value`, a backslash outside quotes, quotes that are only part of a word, cmd's `%`/`^` — is refused and becomes one `UNPARSEABLE_COMMAND` action, BLOCKed by the new `shell.block_unparseable_commands` (default `true`; `false` = WARN). The policy key is filled in by `applyDefaults`, so existing generated policies get the safe default without being edited. `CommandLine`/`command_line` keys are now recognized as commands.
+**Trade-off, stated plainly:** some ordinary commands are refused (`ls *.js`, `echo $PATH`, an unquoted Windows path). That is the price of not guessing how a shell would expand them.
+**Residual gap (kept as a passing test):** this decides how a line *splits*, not what an allowed binary does with its own arguments: `npm run <script>`, npm install scripts, git aliases and `git -c` settings run whatever they are configured to run. That is the F2 class — `shell.allowed` trusts whatever an allowed binary can be told to do.
+
 ### Informational (documented characteristics, not vulnerabilities)
 - Gateway/`agentguard exec` are not mandatory chokepoints — inherent to the architecture, now re-confirmed and clearly stated above.
 - `serverName` has no cryptographic binding to the spawned command — an operator-trust question, not attacker-exploitable (the agent has no influence over it).
@@ -138,7 +163,7 @@ Severity per the assessment's own scale (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL)
 - Deeply nested MCP arguments/responses have no recursion-depth limit (`walkStrings`/`collectStrings`) — a real, bounded stack-overflow DoS surface (confirmed via `test/security-validation/resource-exhaustion-and-malformed.test.js`), not fixed in this phase (would need a depth-limit threading change touching multiple call sites for a POC-scale risk — accepted, not remediated).
 - `npm audit`: clean, 0 vulnerabilities, single well-known dependency (`js-yaml`).
 - Audit log is plain-permission JSONL, tamperable by anything with the same filesystem access AgentGuard restricts — observability, not a forensic store (matches the brief's own framing).
-- Secret **values** are never logged anywhere in the pipeline — verified by `test/security-validation/secret-leakage.test.js`: every place a secret match becomes a log/event/error field uses the pattern *name* (e.g. `"aws-access-key-id"`), never the matched text.
+- Secret **values** are never logged anywhere in the pipeline — verified by `test/security-validation/secret-leakage.test.js` and, since F14 showed the original verification was too narrow, `f14-secret-values-in-audit-log.test.js`: a secret match becomes the pattern *name* (e.g. `"aws-access-key-id"`), and any secret text left in a recorded string is replaced with `[REDACTED:<name>]` when the event is built.
 - Malformed request shapes (missing fields, wrong types, `null`, arrays instead of objects) do **not** crash the translator or response inspector — confirmed as a positive finding, not assumed.
 
 ## Security Claims Matrix
@@ -151,6 +176,8 @@ Severity per the assessment's own scale (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL)
 | Arbitrary process monitoring (commands run outside the wrapper) | ✗ |
 | Allowed-interpreter code-execution containment | ✗ *(F2: narrow mitigation only, not a general fix)* |
 | Path-traversal-resistant filesystem policy matching | ✓ *(F4: lexical only, no symlink resolution)* |
+| A denied folder covered when a tool targets the folder itself | ✓ *(F15; a search of a parent folder is not judged)* |
+| Every command in a shell command string checked; unparseable syntax blocked | ✓ *(F16; what an allowed binary runs itself is not judged)* |
 | Sensitive-path detection (posture) | ✓ |
 | Host-wide filesystem monitoring | ✗ |
 | MCP response inspection | ✓ *(pattern-based, narrow — see F5)* |
@@ -168,13 +195,15 @@ Severity per the assessment's own scale (CRITICAL/HIGH/MEDIUM/LOW/INFORMATIONAL)
 3. **"AgentGuard can identify certain risky local AI configurations."** True, unchanged from Phase 2, with two correctness fixes (F9) that don't change the capability's substance.
 4. **"AgentGuard can generate trustworthy security events for actions it observes."** True for actions it evaluates; F1/F6 closed two cases where an action was never evaluated (and thus never truthfully reported) in the first place.
 5. **"AgentGuard can correlate related observed events."** True, within one session (as designed) — F7 fixed a real availability bug in the tool that reports correlations.
-6. **"AgentGuard does not expose sensitive data through its own logging or inspection mechanisms."** True, verified by direct test, not assumed.
+6. **"AgentGuard does not expose sensitive data through its own logging or inspection mechanisms."** True, verified by direct test, not assumed — but only since F14: the original test covered one gateway case, and `agentguard exec` plus secrets inside path-shaped values did leak into the log until the redaction moved into the shared event constructor.
 
 ## Residual risk
 
 - The interpreter-eval bypass (F2) is narrowed, not eliminated — an operator who adds `node`/`python`/similar to `shell.allowed` is still granting broad code-execution capability, just with a slightly higher bar against the most naive attempts.
 - The response-inspection split bypass (F5) is narrowed to the common `text`-key convention — a response shape that doesn't use it, or a fragment sequence with any inserted separator, still evades it.
 - Network-destination detection (F10) is narrowed to host-style key names and raw HTTP text. A destination hidden under any other field name is still invisible to `network.allowed_domains` — the same "heuristic, not schema-aware" limitation, now observed against a real server rather than only reasoned about.
+- Folder coverage (F15) stops at the folder named in the request: a recursive search of a parent folder is not judged by path matching.
+- The command-line parser (F16) is strict by design and refuses some ordinary commands; and what an allowed binary runs on its own (npm scripts, git config) remains the F2 class.
 - Deep nesting remains a real (bounded, non-catastrophic) DoS surface — not fixed, documented.
 - Everything already true about the trust-boundary model (gateway/`agentguard exec` are not mandatory) remains true and is now more explicitly documented in the README threat model.
 

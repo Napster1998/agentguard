@@ -1,4 +1,15 @@
 import crypto from 'node:crypto';
+import { redactSecrets } from './resource-heuristics.js';
+
+/** Applies redactSecrets to every string in a plain JSON-shaped value. */
+function redactDeep(value) {
+  if (typeof value === 'string') return redactSecrets(value);
+  if (Array.isArray(value)) return value.map(redactDeep);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactDeep(v)]));
+  }
+  return value;
+}
 
 /**
  * The record of one evaluated Action, correlatable by sessionId. This is
@@ -30,7 +41,16 @@ import crypto from 'node:crypto';
  * @property {object|null} metadata - adapter-specific extra fields (e.g. cwd for shell-exec)
  */
 
-/** @returns {SecurityEvent} */
+/**
+ * Every string in the event is passed through redactSecrets, so no adapter can
+ * write a secret VALUE into the audit log or the stderr mirror, whatever field
+ * it lands in (a path in `resource`, raw argv in `metadata`, a command line
+ * quoted in `reason`). This is the one place every adapter's events are built,
+ * which is why the guarantee lives here and not in each adapter
+ * (SECURITY-ASSESSMENT.md F14). Decisions are made before this, on raw values.
+ *
+ * @returns {SecurityEvent}
+ */
 export function createSecurityEvent({
   sessionId,
   agentId = sessionId,
@@ -49,7 +69,7 @@ export function createSecurityEvent({
   metadata = null,
   timestamp = new Date().toISOString(),
 }) {
-  return {
+  return redactDeep({
     id: crypto.randomUUID(),
     sessionId,
     agentId,
@@ -67,5 +87,5 @@ export function createSecurityEvent({
     reason,
     subDecisions,
     metadata,
-  };
+  });
 }

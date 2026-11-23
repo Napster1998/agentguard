@@ -87,13 +87,25 @@ function expandedVariants(p) {
 }
 
 /**
+ * A value is also tried as a folder (with a trailing "/"), so a pattern that
+ * covers everything inside a folder ("~/.aws/**") covers the folder itself
+ * too. Without this, a tool that takes a folder (list a directory, search it)
+ * could reach a denied folder without a policy hit - SECURITY-ASSESSMENT.md
+ * F15. A file pattern ("**\/*.pem") does not gain anything from it: the extra
+ * "/" can only match a pattern whose last segment may be empty.
+ */
+function withFolderVariants(variants) {
+  return [...new Set(variants.flatMap((v) => (v.endsWith('/') ? [v] : [v, `${v}/`])))];
+}
+
+/**
  * Returns the first pattern in `patterns` that matches `value`, or null.
  * Matching is case-insensitive by design: for a deny/warn list this is the
  * safer direction (it catches more, never fewer, potential matches).
  */
 export function matchesAny(value, patterns = []) {
   if (typeof value !== 'string' || value.length === 0) return null;
-  const valueVariants = expandedVariants(value);
+  const valueVariants = withFolderVariants(expandedVariants(value));
   for (const pattern of patterns) {
     const regexes = expandedVariants(pattern).map(
       (v) => new RegExp('^' + toRegexSource(v) + '$', 'i')

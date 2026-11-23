@@ -34,6 +34,11 @@ function normalizeBinary(binary) {
  *                                inspects the binary name, so a general-
  *                                purpose interpreter otherwise grants
  *                                arbitrary code execution.
+ *  - shell.block_unparseable_commands defaults to true — BLOCKs a shell
+ *                                command LINE that uses syntax the strict
+ *                                parser (command-line.js) refuses: it cannot
+ *                                be split into commands safely, so it is
+ *                                not guessed at. See F16.
  *  - mcp.allowed_servers empty -> all MCP servers are trusted (no reputation data yet)
  *  - network.allowed_domains empty -> no domain restriction (best-effort visibility only)
  *  - secrets.block_exfiltration defaults to true
@@ -45,7 +50,7 @@ function normalizeBinary(binary) {
 export function applyDefaults(raw = {}) {
   return {
     filesystem: { allow: [], deny: [], warn: [], ...raw.filesystem },
-    shell: { allowed: [], deny: [], block_interpreter_eval: true, ...raw.shell },
+    shell: { allowed: [], deny: [], block_interpreter_eval: true, block_unparseable_commands: true, ...raw.shell },
     mcp: { allowed_servers: [], ...raw.mcp },
     network: { allowed_domains: [], ...raw.network },
     secrets: { block_exfiltration: true, ...raw.secrets },
@@ -71,6 +76,8 @@ export class PolicyEngine {
         return this.#evaluateShell(action);
       case 'interpreter-eval':
         return this.#evaluateInterpreterEval(action);
+      case 'shell-syntax':
+        return this.#evaluateShellSyntax(action);
       case 'mcp-server':
         return this.#evaluateMcpServer(action);
       case 'network':
@@ -198,6 +205,27 @@ export class PolicyEngine {
       reason: `Command "${action.resource.value}" invokes a general-purpose interpreter with an inline-code flag (e.g. -e/-c/-Command); this would bypass shell.allowed's binary-name-only enforcement, so it is blocked by default regardless of whether the interpreter itself is allowed.`,
       risk: assessRisk({ sensitivity: RISK.CRITICAL, verdict, credentialInvolved: true }),
       rule: 'shell.block_interpreter_eval',
+    });
+  }
+
+  /**
+   * A command LINE the strict parser refused (resource value = what it
+   * refused, e.g. 'a "$" (variable or command substitution)'). Which commands
+   * such a line would run cannot be known without guessing how some shell
+   * expands it, so it is blocked rather than guessed — the same reasoning as
+   * fail-closed malformed JSON (F1). See SECURITY-ASSESSMENT.md F16.
+   */
+  #evaluateShellSyntax(action) {
+    const verdict = this.policy.shell.block_unparseable_commands ? VERDICT.BLOCK : VERDICT.WARN;
+    const what = `Command line contains ${action.resource.value}, which AgentGuard does not parse`;
+    return makeDecision({
+      verdict,
+      reason:
+        verdict === VERDICT.BLOCK
+          ? `${what}; blocked rather than guessed, because the commands it would run cannot be determined safely.`
+          : `${what}; shell.block_unparseable_commands is disabled, so it is flagged and runs unevaluated.`,
+      risk: assessRisk({ sensitivity: RISK.HIGH, verdict }),
+      rule: 'shell.block_unparseable_commands',
     });
   }
 

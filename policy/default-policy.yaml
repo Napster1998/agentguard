@@ -71,6 +71,15 @@ shell:
   # that risk.
   block_interpreter_eval: true
 
+  # For a command given as ONE string (an MCP shell-style tool), not as argv.
+  # Every command in a chain or pipeline (&& || ; & |) is checked, and the
+  # targets of > >> < redirects are checked as file writes/reads. A line using
+  # syntax AgentGuard does not parse - $( ), backticks, variables, wildcards,
+  # parentheses, here-docs, line breaks, a backslash outside quotes - is
+  # BLOCKed instead of guessed at (SECURITY-ASSESSMENT.md F16). Set false to
+  # WARN instead; such a line then runs without its commands being checked.
+  block_unparseable_commands: true
+
 mcp:
   # Empty = trust all configured MCP servers (no reputation data in Phase 1).
   # List specific server names to WARN on anything not explicitly trusted.

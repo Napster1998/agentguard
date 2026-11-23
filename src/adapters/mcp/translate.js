@@ -9,11 +9,13 @@ import {
   extractHostname,
   parseBareHostname,
   parseRawHttpRequest,
-  isInterpreterEvalAttempt,
 } from '../../core/resource-heuristics.js';
+import { commandLineToActions } from '../shell/argv-actions.js';
 
 const SHELL_TOOL_RE = /shell|exec|command|run_cmd|terminal|bash|powershell|^cmd$/i;
-const SHELL_KEY_RE = /^(command|cmd|script)$/i;
+// "CommandLine"/"command_line" added for F16: Antigravity's run_command and
+// similar tools name the key that way, and such a command was never evaluated.
+const SHELL_KEY_RE = /^(command|cmd|script|command_?line)$/i;
 
 function walkStrings(node, visit, keyPath = []) {
   if (node == null) return;
@@ -70,18 +72,21 @@ export function mcpRequestToActions(message, context) {
 
   walkStrings(args, (key, value) => {
     if (isShellTool && SHELL_KEY_RE.test(key)) {
-      const parts = value.trim().split(/\s+/);
-      const binary = parts[0];
-      if (binary) {
-        actions.push(
-          createAction({ verb: 'execute', resourceType: 'shell', resourceValue: binary, context: baseContext })
-        );
-        if (isInterpreterEvalAttempt(binary, parts.slice(1))) {
-          actions.push(
-            createAction({ verb: 'execute', resourceType: 'interpreter-eval', resourceValue: value, context: baseContext })
-          );
+      // A command LINE: split by the strict parser and evaluate every command
+      // in it (F16). It used to be judged by its first word only, so
+      // "git status && rm -rf ~" was ALLOWed. Handled completely here: the
+      // whole line is not also filed as one "path" below.
+      const lineActions = commandLineToActions(value, baseContext);
+      actions.push(...lineActions);
+      const seenSecrets = new Set(lineActions.filter((a) => a.resource.type === 'secret').map((a) => a.resource.value));
+      for (const pattern of SECRET_PATTERNS) {
+        // Whole-line check too: a line the parser refused has no per-word
+        // check, and a pattern such as `api_key = "..."` spans several words.
+        if (!seenSecrets.has(pattern.name) && pattern.re.test(value)) {
+          actions.push(createAction({ verb: 'transmit', resourceType: 'secret', resourceValue: pattern.name, context: baseContext }));
         }
       }
+      return;
     }
 
     // Network destinations, in order of specificity: raw HTTP request text

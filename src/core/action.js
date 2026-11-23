@@ -3,7 +3,7 @@
  * MCP is one *source* of actions; a future shell/filesystem/network adapter
  * would produce the same shape so the engine never needs to know MCP exists.
  *
- * @typedef {'filesystem'|'shell'|'mcp-server'|'network'|'secret'|'interpreter-eval'} ResourceType
+ * @typedef {'filesystem'|'shell'|'mcp-server'|'network'|'secret'|'interpreter-eval'|'shell-syntax'} ResourceType
  *
  * @typedef {Object} Action
  * @property {string} verb                 - e.g. 'read', 'execute', 'invoke', 'transmit'
@@ -31,6 +31,11 @@ export const ActionType = Object.freeze({
   // detected alongside (not instead of) the ordinary SHELL_EXEC action for
   // the same call. See SECURITY-ASSESSMENT.md F2.
   INTERPRETER_EVAL_ATTEMPT: 'INTERPRETER_EVAL_ATTEMPT',
+  // A shell command LINE using syntax the strict parser in command-line.js
+  // refuses ($(...), backticks, variables, globs, ...). It cannot be split
+  // into commands safely, so it is evaluated as one unit of its own rather
+  // than guessed at. See SECURITY-ASSESSMENT.md F16.
+  UNPARSEABLE_COMMAND: 'UNPARSEABLE_COMMAND',
 });
 
 const TYPE_BY_RESOURCE_VERB = {
@@ -41,6 +46,7 @@ const TYPE_BY_RESOURCE_VERB = {
   'network:network': ActionType.NETWORK_REQUEST,
   'secret:transmit': ActionType.SECRET_PATTERN_MATCH,
   'interpreter-eval:execute': ActionType.INTERPRETER_EVAL_ATTEMPT,
+  'shell-syntax:execute': ActionType.UNPARSEABLE_COMMAND,
 };
 
 /** @returns {Action} */

@@ -210,8 +210,9 @@ every `tools/call`, blocks by never forwarding, warns by forwarding-and-logging.
 (new in Phase 3): evaluates `command args...` against the *same* policy
 **before ever calling `spawn()`**. On BLOCK, the process is never created —
 this is genuine prevention, not after-the-fact observation, for anything
-routed through it. Unlike the MCP adapter, which has to guess resource
-shapes out of a joined command string or unknown JSON keys, `agentguard exec`
+routed through it. Unlike the MCP adapter, which has to split a command
+given as one string (a strict parser checks every command in a chain and
+blocks syntax it does not parse, F16) or guess from unknown JSON keys, `agentguard exec`
 gets real, already-split `argv`: the binary is unambiguous, and each
 argument is checked on its own merits (so `agentguard exec -- npm pack
 ~/.ssh/id_rsa` is BLOCKed by `filesystem.deny` even though `npm` itself is
@@ -308,9 +309,9 @@ project claims to solve.
 | Asset | Threat | Attack path | AgentGuard control | Residual risk |
 |---|---|---|---|---|
 | Source code / repos | Excessive read/write access | Agent reads/writes outside its intended workspace | `filesystem.allow` scoping (both adapters) | No symlink resolution; a workspace escape via a symlink isn't caught |
-| Credentials (SSH keys, `.env`, cloud config) | Exposure or exfiltration | Agent reads a credential path, directly or via traversal | `filesystem.deny`/`warn` + traversal collapsing (F4) + `agentguard scan` standing-exposure check | Still lexical matching, not full canonicalization |
+| Credentials (SSH keys, `.env`, cloud config) | Exposure or exfiltration | Agent reads a credential path, directly or via traversal, or lists/searches the credentials folder itself | `filesystem.deny`/`warn` + traversal collapsing (F4) + a `X/**` rule covers the folder `X` itself (F15) + `agentguard scan` standing-exposure check | Still lexical matching, not full canonicalization; a search of a *parent* folder is not judged (F15) |
 | MCP servers | Untrusted/malicious server | An unlisted or spoofable server is invoked | `mcp.allowed_servers` + posture discovery + response inspection | `serverName` has no cryptographic binding to what's actually spawned — an operator-trust question |
-| Developer workstation (shell) | Dangerous/arbitrary execution | A denied command, or an allowed interpreter given arbitrary code via `-e`/`-c` | `shell.allowed`/`deny` (basename-normalized, F3) + `shell.block_interpreter_eval` (F2) | Interpreter mitigation is narrow — doesn't stop a payload written to a file first |
+| Developer workstation (shell) | Dangerous/arbitrary execution | A denied command, or an allowed interpreter given arbitrary code via `-e`/`-c`, or a denied command chained after an allowed one in a command string | `shell.allowed`/`deny` (basename-normalized, F3) + `shell.block_interpreter_eval` (F2) + every command in a chain checked, unparseable syntax blocked (F16) | Interpreter mitigation is narrow — doesn't stop a payload written to a file first; what an allowed binary (npm scripts, git config) runs itself is not judged |
 | External destinations | Data exfiltration | A tool call or shell command reaches an unexpected domain | `network.allowed_domains` (best-effort) + correlation (sensitive-read-then-network) | No raw socket visibility — only URLs visible in MCP arguments |
 | Malicious/untrusted tool responses | Instruction injection, secret leakage in a response | A tool response contains an injected instruction or a credential | MCP response inspection (secret pattern BLOCK, instruction pattern WARN) | Pattern-based only — rephrased injection or a response shape without a `text` key evades it (F5) |
 | The gateway itself (bypass) | Agent routes around AgentGuard entirely | MCP client configured to talk to the real server directly; command run outside `agentguard exec` | None — architectural, not a bug | Not a mandatory chokepoint; see above |
@@ -493,6 +494,16 @@ resulting `Detection`s beneath that session.
   full canonicalization** — no symlink resolution, no filesystem access
   during matching (F4 closed the traversal-bypass direction, not the
   broader canonicalization gap).
+- **A folder rule covers the folder itself, not its parents.** `~/.aws/**`
+  now also BLOCKs listing or searching `~/.aws` (F15), but a recursive search
+  of your home folder names nothing denied, so path matching cannot judge it.
+- **A command given as one string is parsed strictly, by design** (F16). Only
+  plain words, whole-word quotes, `&& || ; & |` and simple `> >> <` redirects
+  are understood, and every command in a chain is checked. Anything else
+  (`$`, backticks, wildcards, parentheses, line breaks, a backslash outside
+  quotes, ...) is BLOCKed by `shell.block_unparseable_commands` rather than
+  guessed at, so some ordinary commands are refused too. What an *allowed*
+  binary then runs itself (npm scripts, git aliases/config) is not judged.
 
 **Posture scanner:** unchanged from Phase 2 — a small hand-maintained agent
 registry (misses anything not in it), a fixed non-exhaustive list of MCP
@@ -507,10 +518,10 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 218 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 239 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper, wrap/unwrap/status (all with fake
                  # data sources or a sandboxed fake home where possible) + real
-                 # end-to-end proxy/exec/CLI process spawns, plus 51 security-validation
+                 # end-to-end proxy/exec/CLI process spawns, plus 67 security-validation
                  # regression tests (test/security-validation/) — see SECURITY-ASSESSMENT.md
 npm run demo    # the full narrative — see "DevDay demo flow" below
 npm run scan    # agentguard scan against THIS machine
@@ -572,6 +583,9 @@ shell:
   block_interpreter_eval: true  # BLOCKs a known interpreter (node/python/sh/powershell/...)
                  # invoked with its inline-eval flag, even if the interpreter is itself
                  # allowed — narrow mitigation, see SECURITY-ASSESSMENT.md F2
+  block_unparseable_commands: true  # for a command given as ONE string: BLOCKs syntax the
+                 # strict parser does not understand ($, backticks, wildcards, ...) instead
+                 # of guessing; every command in a chain is checked either way (F16)
 
 mcp:
   allowed_servers: []   # empty = trust all; also used by `agentguard scan` for trust labels
@@ -596,6 +610,7 @@ mcp_response_inspection:
 | Invoke a server not in `mcp.allowed_servers` | **WARN** (or ALLOW if empty) | MEDIUM | No server-reputation data; empty = trust everything configured. |
 | Shell command not in `shell.allowed` (MCP or `agentguard exec`) | **BLOCK** | HIGH | Arbitrary shell execution is the highest-leverage action available; deny-by-default. |
 | Shell command in `shell.deny` | **BLOCK**, always | HIGH | Wins even over `shell.allowed` — defense in depth. |
+| A shell command string using syntax AgentGuard does not parse (`$( )`, backticks, wildcards, ...) | **BLOCK** | HIGH | Which commands it would run cannot be known without guessing how a shell expands it — see SECURITY-ASSESSMENT.md F16. |
 | A known interpreter (node/python/sh/...) invoked with its inline-eval flag | **BLOCK** | CRITICAL | `shell.allowed` only inspects the binary name; an allowed interpreter otherwise grants arbitrary code execution. Narrow mitigation, not a general fix — see SECURITY-ASSESSMENT.md F2. |
 | A tool-call argument or response matching a known secret pattern | **BLOCK** | CRITICAL | Credential material should never cross this boundary in either direction. |
 | A response matching an instruction-injection pattern | **WARN** by default | MEDIUM | A detection signal, not proof — blocking on keyword-matching alone is opt-in. |

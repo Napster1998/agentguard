@@ -102,6 +102,24 @@ export function findSecretMatches(value) {
   return SECRET_PATTERNS.filter((p) => p.re.test(value));
 }
 
+const SECRET_PATTERNS_GLOBAL = SECRET_PATTERNS.map((p) => ({
+  name: p.name,
+  re: new RegExp(p.re.source, p.re.flags.includes('g') ? p.re.flags : `${p.re.flags}g`),
+}));
+
+/**
+ * Replaces every secret-pattern match in `value` with "[REDACTED:<pattern
+ * name>]", so a record can keep the surrounding text (a path, a command line)
+ * without the secret itself. For what gets WRITTEN DOWN only; policy
+ * evaluation always sees the raw value. See SECURITY-ASSESSMENT.md F14.
+ */
+export function redactSecrets(value) {
+  if (typeof value !== 'string') return value;
+  let out = value;
+  for (const p of SECRET_PATTERNS_GLOBAL) out = out.replace(p.re, `[REDACTED:${p.name}]`);
+  return out;
+}
+
 export function findSuspiciousInstructionMatch(value) {
   return SUSPICIOUS_INSTRUCTION_PATTERNS.find((re) => re.test(value)) || null;
 }
