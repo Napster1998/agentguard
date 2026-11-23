@@ -263,8 +263,22 @@ cmdlets allowed, destructive ones denied):
 - `[IO.File]::ReadAllText(...)` was BLOCKed;
 - `curl.exe` gave a WARN, and so did its retry outside the sandbox.
 
-On Linux and macOS the strict cross-shell parser (F16) is used until a real run
-there shows which shell Antigravity uses.
+**On Linux** (verified on one machine) Antigravity runs terminal commands in a
+non-interactive bash, and AgentGuard reads them with the strict cross-shell
+parser (F16). A command using `$`, wildcards and the like is blocked rather
+than guessed at, and there is no recursive-search check there yet.
+
+Linux results from the real app:
+- `ls` gave a WARN;
+- `read_file` of a `.aws` file was BLOCKed;
+- `rm` was BLOCKed;
+- an attempt on `.agents/hooks.json` was BLOCKed;
+- the wrapped Burp server's call was left to the gateway;
+- "credential read, then shell" was detected.
+
+The Linux build sends a hook payload without `hookEventName` and `cwd`, so
+the installed command names its event (`--event PreToolUse`). macOS is
+untested.
 
 Unknown tools are allowed with a WARN. Each Antigravity conversation is one
 session, so correlation works across its calls.

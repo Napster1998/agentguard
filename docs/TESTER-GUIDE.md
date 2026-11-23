@@ -188,8 +188,10 @@ it, or `agentguard hooks remove ... --apply` to take it out.
 - **It only sees traffic routed through it.** A server left unwrapped, or an
   agent that runs shell commands directly, bypasses it. With `agentguard hooks`
   installed, Antigravity's own tools and terminal are covered too.
-- **The Antigravity hook is verified on Windows only.** On Linux and macOS its
-  terminal checks use a strict generic parser until a real test there.
+- **The Antigravity hook is verified on Windows and Linux (one machine each);
+  macOS is untested.** On Linux, terminal commands (bash) are read by a strict
+  generic parser: a command with `$`, wildcards and the like is blocked rather
+  than guessed at.
 - **The Antigravity profile is strict about the terminal.** A command it cannot
   read safely (a .NET method call, `Invoke-Expression`, a computed argument,
   PowerShell 7-only syntax like `&&`) is blocked with a reason. Tell us which

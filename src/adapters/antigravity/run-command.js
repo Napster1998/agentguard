@@ -44,8 +44,9 @@ import {
  *     (filesystem.recursive_search_from_home).
  *  7. BypassSandbox:true is flagged (shell.unsandboxed).
  *
- * On other systems the strict cross-shell parser (F16) is used until a real
- * Linux/macOS run shows which shell Antigravity uses there.
+ * On other systems the strict cross-shell parser (F16) is used. Verified on
+ * Linux (Phase 6.5): Antigravity runs commands there in a non-interactive bash,
+ * and the F16 grammar is a safe subset of it. macOS is untested.
  *
  * Residuals, stated: what an allowed program does on its own (npm scripts, git
  * config) is not judged (F2 class); file targets that arrive through the
