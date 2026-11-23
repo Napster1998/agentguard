@@ -26,6 +26,9 @@ function sandbox() {
   const agHome = path.join(home, '.agentguard');
   const env = {
     ...process.env,
+    // `node --test` in a real terminal sets FORCE_COLOR for its children; with
+    // NO_COLOR also set, Node prints a warning on stderr (found on Linux).
+    FORCE_COLOR: undefined,
     HOME: home,
     USERPROFILE: home,
     APPDATA: path.join(home, 'AppData', 'Roaming'),
@@ -207,6 +210,31 @@ test('status reports the last hook decision and tools that have no rule', async 
     const status = cli(['status', '--project', s.workspace], s.env).stdout;
     assert.match(status, /last hook decision: \d{4}-/);
     assert.match(status, /tools without a rule \(allowed with WARN\): swarm/);
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('the installed hook stays silent on stderr even when Node would warn (NO_COLOR + FORCE_COLOR, found on Linux)', async () => {
+  const s = sandbox();
+  try {
+    assert.equal(cli(['hooks', '--workspace', s.workspace, '--apply'], s.env).status, 0);
+    const command = JSON.parse(fs.readFileSync(s.hooksFile, 'utf8')).agentguard.PreToolUse[0].hooks[0].command;
+    assert.match(command, /--no-warnings/);
+    const env = { ...s.env, NO_COLOR: '1', FORCE_COLOR: '1' };
+    const child =
+      process.platform === 'win32'
+        ? spawn('cmd.exe', ['/s', '/c', `"${command}"`], { windowsVerbatimArguments: true, env })
+        : spawn('/bin/sh', ['-c', command], { env });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (c) => (out += c));
+    child.stderr.on('data', (c) => (err += c));
+    child.stdin.end(JSON.stringify(real.readFile(path.join(s.workspace, 'README.md'))));
+    const code = await new Promise((r) => child.on('close', r));
+    assert.equal(code, 0);
+    assert.deepEqual(JSON.parse(out.trim()), { decision: 'allow' });
+    assert.equal(err, '', 'nothing for Antigravity to show the model');
   } finally {
     s.cleanup();
   }

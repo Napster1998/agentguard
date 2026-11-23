@@ -35,11 +35,16 @@ export function hooksFileFor({ workspace = null, global = false, homedir = os.ho
 /** cmd.exe expands %VAR% even inside quotes, and a " would end the quoting. */
 const UNSAFE_PATH_CHARS = /["%\r\n]/;
 
+/**
+ * `--no-warnings`: Antigravity shows a hook's stderr to the model, so Node's own
+ * runtime warnings must never land there. Found on Linux: with both NO_COLOR and
+ * FORCE_COLOR set, Node prints "The 'NO_COLOR' env is ignored..." at startup.
+ */
 export function buildHookCommand({ nodePath = process.execPath, scriptPath = SCRIPT_PATH, policyPath, logPath }) {
   for (const p of [nodePath, scriptPath, policyPath, logPath]) {
     if (UNSAFE_PATH_CHARS.test(p)) throw new Error(`cannot install the hook: the path ${p} contains a " or %, which the hook command cannot quote safely`);
   }
-  return `"${nodePath}" "${scriptPath}" hook antigravity --policy "${policyPath}" --log "${logPath}"`;
+  return `"${nodePath}" --no-warnings "${scriptPath}" hook antigravity --policy "${policyPath}" --log "${logPath}"`;
 }
 
 export function buildGroup(command) {
@@ -86,10 +91,12 @@ export function readHooksState(file, expectedCommand) {
 /**
  * Runs the hook command exactly the way Antigravity does (Windows:
  * `cmd /s /c "<command>"`; elsewhere `sh -c`), feeding it a SessionStart event.
- * A working hook loads its policy and answers `{}` with exit 0 and no stderr.
- * Anything else means installing it would make Antigravity block every call.
+ * A working hook loads its policy and answers `{}` with exit 0: that is what
+ * Antigravity needs (anything else makes it block every call). Output on stderr
+ * does not break the hook, but Antigravity may show it to the model, so it is
+ * passed back as a warning rather than a failure.
  *
- * @returns {Promise<{ok: boolean, detail: string}>}
+ * @returns {Promise<{ok: boolean, detail: string, stderr?: string}>}
  */
 export function selfTestHook(command, { cwd = os.tmpdir(), timeoutMs = 20000, platform = process.platform } = {}) {
   const payload = JSON.stringify({ hookEventName: 'SessionStart', conversationId: 'agentguard-self-test', cwd, workspacePaths: [cwd] });
@@ -113,7 +120,8 @@ export function selfTestHook(command, { cwd = os.tmpdir(), timeoutMs = 20000, pl
     child.on('close', (code) => {
       clearTimeout(timer);
       const answer = out.trim();
-      if (code === 0 && answer === '{}' && err === '') return resolve({ ok: true, detail: 'answered {} as expected' });
+      const stderr = err.trim() ? err.trim().split(/\r?\n/)[0].slice(0, 200) : undefined;
+      if (code === 0 && answer === '{}') return resolve({ ok: true, detail: 'answered {} as expected', stderr });
       let why = `exit code ${code}`;
       if (answer && answer !== '{}') why += `, answered ${answer.slice(0, 200)}`;
       if (err) why += `, stderr: ${err.trim().split(/\r?\n/)[0].slice(0, 200)}`;

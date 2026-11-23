@@ -142,6 +142,7 @@ async function install(target, other, { write, opts, paths, command, deps }) {
     return { target, test };
   }
   write(`✓ self-test: the hook command ${test.detail}\n`);
+  if (test.stderr) write(`  ⚠ but it also wrote to stderr ("${test.stderr}"); Antigravity may show that text to the model.\n`);
 
   try {
     const result = writeHooksGroup(target, command, { backupDir: paths.backups });
