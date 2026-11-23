@@ -160,9 +160,21 @@ function normalizeInterpreterName(binary) {
     .replace(/\.(exe|cmd|bat|com|ps1)$/i, '');
 }
 
+/**
+ * PowerShell accepts any unambiguous abbreviation of a parameter, with "-" or
+ * "/": `-co`, `-comm` and `/Command` all mean -Command, and `-e`, `-en`, `-enc`
+ * ... and `-ec` all mean -EncodedCommand (code passed as base64, invisible to
+ * every other check). An exact-match table missed all of those.
+ */
+const POWERSHELL_EVAL_PARAM_RE = /^[-/](c(o(m(m(a(n(d)?)?)?)?)?)?|e(n(c(o(d(e(d(c(o(m(m(a(n(d)?)?)?)?)?)?)?)?)?)?)?)?)?|ec)$/i;
+
 /** @param {string} binary  @param {string[]} args */
 export function isInterpreterEvalAttempt(binary, args) {
-  const flags = INTERPRETER_EVAL_FLAGS[normalizeInterpreterName(binary)];
+  const name = normalizeInterpreterName(binary);
+  if (name === 'powershell' || name === 'pwsh') {
+    return args.some((a) => typeof a === 'string' && POWERSHELL_EVAL_PARAM_RE.test(a));
+  }
+  const flags = INTERPRETER_EVAL_FLAGS[name];
   if (!flags) return false;
   return args.some((a) => typeof a === 'string' && flags.includes(a.toLowerCase()));
 }

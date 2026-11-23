@@ -240,14 +240,31 @@ Claude and Gemini models:
 
 Checked today:
 - the target of `read_file` / `write_file` / `edit_file` (`filesystem` rules);
+- **terminal commands (`run_command`)**. On Windows, Antigravity runs them in
+  Windows PowerShell 5.1, so AgentGuard asks **PowerShell's own parser** how it
+  will read the line (parse only, never run). Every command it finds is checked,
+  including commands nested in script blocks:
+  - built-in aliases (`rm`, `cat`, `iex`) count as the commands they stand for;
+  - file arguments are checked against the filesystem rules;
+  - URLs are checked as network destinations;
+  - redirection targets are checked as file writes;
+  - a .NET method call, a computed command name, `Invoke-Expression` or a
+    computed argument cannot be evaluated, so it is **blocked**;
 - MCP calls (`call_mcp_tool`), with the gateway's own translator and rules.
   This includes **remote (HTTP/SSE) servers, which the gateway cannot
   wrap**. Servers already behind the gateway are left to it, so a call is
   never logged twice;
 - known secret patterns in **any** tool's arguments.
 
-Recorded but **not yet enforced**:
-- `run_command` (PowerShell parsing, step 6.3).
+Real-app check, with a coding-agent policy (`shell.unlisted: warn`, read-only
+cmdlets allowed, destructive ones denied):
+- `Get-Content fake-creds\.aws\credentials` was BLOCKed;
+- `Remove-Item` was BLOCKed;
+- `[IO.File]::ReadAllText(...)` was BLOCKed;
+- `curl.exe` gave a WARN, and so did its retry outside the sandbox.
+
+On Linux and macOS the strict cross-shell parser (F16) is used until a real run
+there shows which shell Antigravity uses.
 
 Unknown tools are allowed with a WARN. Each Antigravity conversation is one
 session, so correlation works across its calls. There is no install command
@@ -523,6 +540,20 @@ resulting `Detection`s beneath that session.
   full canonicalization** — no symlink resolution, no filesystem access
   during matching (F4 closed the traversal-bypass direction, not the
   broader canonicalization gap).
+- **Antigravity terminal commands: what is and is not judged.**
+  - The parser is Windows PowerShell 5.1, which is the version Antigravity
+    used on the test machine. A line only PowerShell 7 accepts, such as one
+    with `&&`, is a syntax error to it, so it is blocked.
+  - File targets that arrive through the pipeline
+    (`Get-ChildItem | Move-Item -Destination x`) are not known.
+  - What an allowed program does on its own (npm scripts, git config) is not
+    judged (F2 class).
+  - A recursive search that starts at the workspace can still reach a
+    credential folder *inside* the workspace; only a search starting at home
+    or above is flagged.
+  - Correlation counts a credential read done *through the terminal* as a
+    shell command, not as a file read. So "credential read, then shell" fires
+    for `read_file` but not for `Get-Content`.
 - **A folder rule covers the folder itself, not its parents.** `~/.aws/**`
   now also BLOCKs listing or searching `~/.aws` (F15), but a recursive search
   of your home folder names nothing denied, so path matching cannot judge it.
@@ -547,10 +578,10 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 260 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 285 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper, wrap/unwrap/status (all with fake
                  # data sources or a sandboxed fake home where possible) + real
-                 # end-to-end proxy/exec/CLI process spawns, plus 67 security-validation
+                 # end-to-end proxy/exec/CLI process spawns, plus 71 security-validation
                  # regression tests (test/security-validation/) — see SECURITY-ASSESSMENT.md
 npm run demo    # the full narrative — see "DevDay demo flow" below
 npm run scan    # agentguard scan against THIS machine
@@ -604,6 +635,7 @@ filesystem:
   allow: []      # optional; if non-empty, anything outside it -> WARN
   deny: []       # -> BLOCK
   warn: []       # -> WARN
+  recursive_search_from_home: warn  # a recursive search rooted at home or above: warn | block | allow
 
 shell:
   allowed: []    # binaries allowed via an MCP shell-style tool call, or `agentguard exec`
@@ -615,6 +647,8 @@ shell:
   block_unparseable_commands: true  # for a command given as ONE string: BLOCKs syntax the
                  # strict parser does not understand ($, backticks, wildcards, ...) instead
                  # of guessing; every command in a chain is checked either way (F16)
+  unlisted: block      # a command in neither list: block, or warn (observe first, for an agent's terminal)
+  unsandboxed: warn    # a command run outside the agent's sandbox: warn | block | allow
 
 mcp:
   allowed_servers: []   # empty = trust all; also used by `agentguard scan` for trust labels

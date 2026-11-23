@@ -24,7 +24,7 @@ export const deny = (reason) => ({ decision: 'deny', reason });
  *
  * @returns {{output: object, event: object|null}}
  */
-export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () => false }) {
+export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () => false, parsePowerShell, platform, homedir }) {
   const parsed = parseHookPayload(raw);
   if (!parsed.ok) {
     const event = recordFailure(logger, parsed.conversationId, `Hook input rejected: ${parsed.reason}.`);
@@ -36,7 +36,15 @@ export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () =
 
   const { toolCall } = parsed;
   const context = { source: SOURCE, sessionId: parsed.conversationId, toolName: toolCall.name, serverName: null };
-  const { actions, error, note, skip, mcp } = toolCallToActions(toolCall, { cwd: parsed.cwd, context, isMcpServerWrapped });
+  const { actions, error, skip, mcp } = toolCallToActions(toolCall, {
+    cwd: parsed.cwd,
+    context,
+    isMcpServerWrapped,
+    shellPolicy: engine.policy?.shell,
+    parsePowerShell,
+    platform,
+    homedir,
+  });
 
   if (error) {
     const event = recordFailure(logger, parsed.conversationId, `${error}.`, toolCall.name);
@@ -49,7 +57,7 @@ export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () =
   const subDecisions = actions.map((action) => ({ action, decision: engine.evaluate(action) }));
   const final = combineDecisions(
     subDecisions.map((s) => s.decision),
-    { verdict: VERDICT.ALLOW, reason: note || 'No resources required policy evaluation.', risk: RISK.LOW, rule: null }
+    { verdict: VERDICT.ALLOW, reason: 'No resources required policy evaluation.', risk: RISK.LOW, rule: null }
   );
   // Same choice as the gateway: the resource the call is really about (a file,
   // a host) rather than the server invocation or a secret match.
@@ -65,8 +73,8 @@ export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () =
     agentId: AGENT_ID,
     source: SOURCE,
     direction: 'request',
-    // A recorded-only call is still what it is: run_command IS a shell
-    // execution, so correlation ("credential read, then shell") must see it.
+    // run_command IS a shell execution, whatever its first evaluated part is
+    // (an unparseable piece, a file), so correlation must see it as one.
     actionType: recorded?.actionType ?? primary?.actionType ?? null,
     // For an MCP call, the MCP tool and server, as the gateway records them.
     toolName: mcp ? mcp.tool : toolCall.name,
@@ -76,7 +84,7 @@ export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () =
     decision: final.verdict,
     risk: final.risk,
     rule: final.rule,
-    reason: final.verdict === VERDICT.ALLOW && note ? note : final.reason,
+    reason: final.reason,
     subDecisions: subDecisions.map((s) => ({
       resourceType: s.action.resource.type,
       value: s.action.resource.value,
@@ -88,8 +96,8 @@ export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () =
       modelName: parsed.modelName,
       cwd: parsed.cwd,
       toolCallId: toolCall.id,
-      // Recorded for review while run_command is not enforced yet. Any secret
-      // in it is redacted when the event is built (F14).
+      // The command as the agent wrote it, for review. Any secret in it is
+      // redacted when the event is built (F14).
       commandLine: typeof toolCall.args.CommandLine === 'string' ? toolCall.args.CommandLine.slice(0, 500) : undefined,
       bypassSandbox: toolCall.args.BypassSandbox === true ? true : undefined,
       via: mcp ? 'call_mcp_tool' : undefined,
@@ -123,9 +131,9 @@ export function recordFailure(logger, conversationId, reason, toolName = null) {
 }
 
 /**
- * For tools that are recorded but not yet evaluated: what kind of action it is
- * and a short, readable summary for `agentguard events` (secrets in it are
- * redacted when the event is built, F14).
+ * For run_command: it is a shell execution whatever its first evaluated part
+ * is, plus a short readable summary of the line for `agentguard events`
+ * (secrets in it are redacted when the event is built, F14).
  */
 function recordedSummary({ name, args }) {
   if (name === 'run_command' && typeof args.CommandLine === 'string') {

@@ -13,7 +13,7 @@ const EXECUTABLE_EXTENSIONS = /\.(exe|cmd|bat|com|ps1)$/i;
  * list entry are normalized the same way, so a policy author can write
  * either form.
  */
-function normalizeBinary(binary) {
+export function normalizeBinary(binary) {
   const basename = binary.replace(/\\/g, '/').split('/').pop() || binary;
   return basename.toLowerCase().replace(EXECUTABLE_EXTENSIONS, '');
 }
@@ -39,6 +39,21 @@ function normalizeBinary(binary) {
  *                                parser (command-line.js) refuses: it cannot
  *                                be split into commands safely, so it is
  *                                not guessed at. See F16.
+ *  - shell.unlisted defaults to 'block' — what happens to a command that is in
+ *                                neither shell.allowed nor shell.deny. 'warn'
+ *                                lets it run and logs it (observe first, used
+ *                                by the policy generated for a coding agent
+ *                                while its allowlist is tuned); shell.deny and
+ *                                every other check still BLOCK either way.
+ *  - shell.unsandboxed defaults to 'warn' — a command the agent asks to run
+ *                                OUTSIDE its sandbox (Antigravity's
+ *                                BypassSandbox). 'block' / 'allow' also valid.
+ *  - filesystem.recursive_search_from_home defaults to 'warn' — a recursive
+ *                                search whose root is the home folder or above
+ *                                it, which can reach credentials no path in
+ *                                the command names. Cannot be a sure BLOCK
+ *                                (whether it reaches them depends on the disk);
+ *                                'block' / 'allow' also valid.
  *  - mcp.allowed_servers empty -> all MCP servers are trusted (no reputation data yet)
  *  - network.allowed_domains empty -> no domain restriction (best-effort visibility only)
  *  - secrets.block_exfiltration defaults to true
@@ -49,8 +64,16 @@ function normalizeBinary(binary) {
  */
 export function applyDefaults(raw = {}) {
   return {
-    filesystem: { allow: [], deny: [], warn: [], ...raw.filesystem },
-    shell: { allowed: [], deny: [], block_interpreter_eval: true, block_unparseable_commands: true, ...raw.shell },
+    filesystem: { allow: [], deny: [], warn: [], recursive_search_from_home: 'warn', ...raw.filesystem },
+    shell: {
+      allowed: [],
+      deny: [],
+      block_interpreter_eval: true,
+      block_unparseable_commands: true,
+      unlisted: 'block',
+      unsandboxed: 'warn',
+      ...raw.shell,
+    },
     mcp: { allowed_servers: [], ...raw.mcp },
     network: { allowed_domains: [], ...raw.network },
     secrets: { block_exfiltration: true, ...raw.secrets },
@@ -78,6 +101,10 @@ export class PolicyEngine {
         return this.#evaluateInterpreterEval(action);
       case 'shell-syntax':
         return this.#evaluateShellSyntax(action);
+      case 'shell-unsandboxed':
+        return this.#evaluateUnsandboxed(action);
+      case 'filesystem-recursive':
+        return this.#evaluateRecursiveSearch(action);
       case 'mcp-server':
         return this.#evaluateMcpServer(action);
       case 'network':
@@ -169,12 +196,47 @@ export class PolicyEngine {
       });
     }
 
-    const verdict = VERDICT.BLOCK;
+    const verdict = this.policy.shell.unlisted === 'warn' ? VERDICT.WARN : VERDICT.BLOCK;
     return makeDecision({
       verdict,
-      reason: `Command "${binary}" is not in the shell.allowed allowlist. Arbitrary shell execution is blocked by default.`,
+      reason:
+        verdict === VERDICT.WARN
+          ? `Command "${binary}" is not in the shell.allowed allowlist; shell.unlisted is "warn", so it is flagged and allowed.`
+          : `Command "${binary}" is not in the shell.allowed allowlist. Arbitrary shell execution is blocked by default.`,
       risk: assessRisk({ sensitivity: RISK.MEDIUM, verdict }),
       rule: 'shell.allowed',
+    });
+  }
+
+  /** A three-way policy setting: 'block' | 'warn' | 'allow' (anything else = the given default). */
+  #setting(value, fallback) {
+    return ['block', 'warn', 'allow'].includes(value) ? value : fallback;
+  }
+
+  #fromSetting(setting) {
+    return setting === 'block' ? VERDICT.BLOCK : setting === 'allow' ? VERDICT.ALLOW : VERDICT.WARN;
+  }
+
+  /** A command the agent asked to run outside its sandbox (resource value: the command line or tool). */
+  #evaluateUnsandboxed(action) {
+    const verdict = this.#fromSetting(this.#setting(this.policy.shell.unsandboxed, 'warn'));
+    return makeDecision({
+      verdict,
+      reason: `The command asked to run outside the agent's sandbox (shell.unsandboxed is "${this.#setting(this.policy.shell.unsandboxed, 'warn')}"); outside it, the command has the full rights of your account.`,
+      risk: assessRisk({ sensitivity: RISK.MEDIUM, verdict }),
+      rule: 'shell.unsandboxed',
+    });
+  }
+
+  /** A recursive search rooted at the home folder or above (resource value: the root). */
+  #evaluateRecursiveSearch(action) {
+    const setting = this.#setting(this.policy.filesystem.recursive_search_from_home, 'warn');
+    const verdict = this.#fromSetting(setting);
+    return makeDecision({
+      verdict,
+      reason: `A recursive search starts at "${action.resource.value}", the home folder or above it, so it can reach credential folders no path in the command names (filesystem.recursive_search_from_home is "${setting}").`,
+      risk: assessRisk({ sensitivity: RISK.HIGH, verdict }),
+      rule: 'filesystem.recursive_search_from_home',
     });
   }
 

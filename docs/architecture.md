@@ -61,10 +61,11 @@ Google Antigravity before each tool call, as a `PreToolUse` hook. It turns the
 call into the same `Action`s, evaluates them with the same Policy Engine and
 answers `allow` or `deny`. A deny means the tool never runs.
 
-It covers the agent's built-in tools (file read/write/edit) and its MCP calls.
-An MCP call is translated with the gateway's own MCP translator, and servers
-already behind the gateway are left to it. `run_command` is recorded but not
-yet enforced. As with the other two entry
+It covers the agent's built-in tools (file read/write/edit), its terminal
+commands and its MCP calls. A terminal command is read by PowerShell's own
+parser, run in parse-only mode, on Windows. An MCP call is translated with the
+gateway's own MCP translator, and servers already behind the gateway are left
+to it. As with the other two entry
 points, nothing it isn't asked about is seen: a tool call only reaches it if
 Antigravity's hook configuration routes it there.
 

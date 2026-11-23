@@ -8,7 +8,9 @@ import { MAX_PAYLOAD_BYTES } from '../adapters/antigravity/payload.js';
 import { antigravityWrappedServers } from '../adapters/antigravity/wrapped-servers.js';
 import { USAGE } from './help.js';
 
-const DEFAULT_DEADLINE_MS = 5000;
+// run_command asks PowerShell's parser (about 0.3 s, more on a cold start), so
+// leave room; the hook's own timeout in hooks.json must stay above this.
+const DEFAULT_DEADLINE_MS = 8000;
 
 function parseArgs(argv) {
   const opts = { adapter: argv[0], policyPath: null, logFile: null, deadlineMs: DEFAULT_DEADLINE_MS };
@@ -55,7 +57,7 @@ const firstLine = (s) => String(s).split(/\r?\n/)[0].slice(0, 200);
  *    reason the model and the user can read.
  *  - Antigravity passes the hook's stderr to the model, so nothing is written
  *    to stderr (the audit log's human mirror is off).
- *  - An internal deadline (default 5 s) answers deny well before Antigravity's
+ *  - An internal deadline (default 8 s) answers deny well before Antigravity's
  *    own timeout, so no process is left behind.
  */
 export async function runHookCommand(argv, { stdin = process.stdin, stdout = process.stdout, exit = (code) => process.exit(code) } = {}) {

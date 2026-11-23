@@ -3,7 +3,7 @@
  * MCP is one *source* of actions; a future shell/filesystem/network adapter
  * would produce the same shape so the engine never needs to know MCP exists.
  *
- * @typedef {'filesystem'|'shell'|'mcp-server'|'network'|'secret'|'interpreter-eval'|'shell-syntax'} ResourceType
+ * @typedef {'filesystem'|'shell'|'mcp-server'|'network'|'secret'|'interpreter-eval'|'shell-syntax'|'shell-unsandboxed'|'filesystem-recursive'} ResourceType
  *
  * @typedef {Object} Action
  * @property {string} verb                 - e.g. 'read', 'execute', 'invoke', 'transmit'
@@ -36,6 +36,12 @@ export const ActionType = Object.freeze({
   // into commands safely, so it is evaluated as one unit of its own rather
   // than guessed at. See SECURITY-ASSESSMENT.md F16.
   UNPARSEABLE_COMMAND: 'UNPARSEABLE_COMMAND',
+  // A command an agent asked to run OUTSIDE its sandbox (Antigravity's
+  // run_command BypassSandbox:true, seen in the Phase 6 spike).
+  UNSANDBOXED_EXECUTION: 'UNSANDBOXED_EXECUTION',
+  // A recursive search rooted at the home folder or above: it can reach
+  // credential folders that no path in the command names (Phase 6 spike, 10a).
+  RECURSIVE_SEARCH: 'RECURSIVE_SEARCH',
 });
 
 const TYPE_BY_RESOURCE_VERB = {
@@ -47,6 +53,8 @@ const TYPE_BY_RESOURCE_VERB = {
   'secret:transmit': ActionType.SECRET_PATTERN_MATCH,
   'interpreter-eval:execute': ActionType.INTERPRETER_EVAL_ATTEMPT,
   'shell-syntax:execute': ActionType.UNPARSEABLE_COMMAND,
+  'shell-unsandboxed:execute': ActionType.UNSANDBOXED_EXECUTION,
+  'filesystem-recursive:read': ActionType.RECURSIVE_SEARCH,
 };
 
 /** @returns {Action} */

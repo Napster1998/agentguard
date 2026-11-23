@@ -39,6 +39,12 @@ filesystem:
     - "**/credentials.json"
     - "**/secrets.yaml"
 
+  # A recursive search (Get-ChildItem -Recurse, rg, grep -r, findstr /s) that
+  # starts at your home folder or above it can reach credential folders that
+  # no path in the command names. warn (default) | block | allow. It cannot be
+  # a certain BLOCK: whether it reaches them depends on what is on disk.
+  recursive_search_from_home: warn
+
 shell:
   # Deny-by-default: only binaries listed here may be invoked through an
   # MCP shell/exec-style tool call, or through `agentguard exec`. An empty
@@ -79,6 +85,16 @@ shell:
   # BLOCKed instead of guessed at (SECURITY-ASSESSMENT.md F16). Set false to
   # WARN instead; such a line then runs without its commands being checked.
   block_unparseable_commands: true
+
+  # A command in neither `allowed` nor `deny`: block (default, deny-by-default)
+  # or warn (allowed and logged). warn is meant for a coding agent's terminal
+  # while its allowlist is tuned from real logs; `deny`, unparseable syntax,
+  # interpreter eval, paths and secrets still BLOCK either way.
+  unlisted: block
+
+  # A command the agent asks to run OUTSIDE its sandbox (Antigravity's
+  # BypassSandbox): warn (default) | block | allow.
+  unsandboxed: warn
 
 mcp:
   # Empty = trust all configured MCP servers (no reputation data in Phase 1).

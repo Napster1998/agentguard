@@ -105,15 +105,16 @@ reason) on stdout. Not meant to be typed by hand.
   --policy <file>     policy to enforce (required; if missing or invalid, every
                       call is denied with a reason, never allowed unchecked)
   --log <file>        where to write the audit log (agentguard events reads it)
-  --deadline-ms <ms>  answer deny if a decision takes longer (default 5000)
+  --deadline-ms <ms>  answer deny if a decision takes longer (default 8000; keep
+                      the hook timeout in hooks.json above it)
 
-Checked now: files read or written by read_file / write_file / edit_file;
-MCP calls (call_mcp_tool), with the same rules as the MCP gateway, except for
-servers already behind the gateway, which check those calls themselves; and
-known secret patterns in any tool's arguments. run_command is recorded but not
-yet enforced beyond that secret check. Any other tool is allowed with a WARN in
-the log. Nothing is written to stderr, because Antigravity shows a hook's
-stderr to the model.`,
+Checked: files read or written by read_file / write_file / edit_file; terminal
+commands (run_command), each command in the line as PowerShell's own parser
+reads it on Windows; MCP calls (call_mcp_tool), with the same rules as the MCP
+gateway, except for servers already behind the gateway, which check those calls
+themselves; and known secret patterns in any tool's arguments. Any other tool is
+allowed with a WARN in the log. Nothing is written to stderr, because
+Antigravity shows a hook's stderr to the model.`,
 };
 
 export function mainHelp() {
