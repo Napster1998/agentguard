@@ -24,7 +24,7 @@ export const deny = (reason) => ({ decision: 'deny', reason });
  *
  * @returns {{output: object, event: object|null}}
  */
-export function handleHookInput(raw, { engine, logger }) {
+export function handleHookInput(raw, { engine, logger, isMcpServerWrapped = () => false }) {
   const parsed = parseHookPayload(raw);
   if (!parsed.ok) {
     const event = recordFailure(logger, parsed.conversationId, `Hook input rejected: ${parsed.reason}.`);
@@ -36,20 +36,28 @@ export function handleHookInput(raw, { engine, logger }) {
 
   const { toolCall } = parsed;
   const context = { source: SOURCE, sessionId: parsed.conversationId, toolName: toolCall.name, serverName: null };
-  const { actions, error, note } = toolCallToActions(toolCall, { cwd: parsed.cwd, context });
+  const { actions, error, note, skip, mcp } = toolCallToActions(toolCall, { cwd: parsed.cwd, context, isMcpServerWrapped });
 
   if (error) {
     const event = recordFailure(logger, parsed.conversationId, `${error}.`, toolCall.name);
     return { output: deny(`AgentGuard could not evaluate this call: ${error}.`), event };
   }
+  // A call the AgentGuard gateway will check itself: allow here, record nothing
+  // (the gateway records it), so one call never appears twice.
+  if (skip) return { output: allow(), event: null };
 
   const subDecisions = actions.map((action) => ({ action, decision: engine.evaluate(action) }));
   const final = combineDecisions(
     subDecisions.map((s) => s.decision),
     { verdict: VERDICT.ALLOW, reason: note || 'No resources required policy evaluation.', risk: RISK.LOW, rule: null }
   );
-  const primary = actions.find((a) => a.resource.type !== 'secret') || actions[0];
-  const isMcp = toolCall.name === 'call_mcp_tool';
+  // Same choice as the gateway: the resource the call is really about (a file,
+  // a host) rather than the server invocation or a secret match.
+  const primary =
+    actions.find((a) => a.resource.type !== 'secret' && a.resource.type !== 'mcp-server') ||
+    actions.find((a) => a.resource.type !== 'secret') ||
+    actions[0];
+  const network = actions.find((a) => a.resource.type === 'network');
   const recorded = recordedSummary(toolCall);
 
   const event = createSecurityEvent({
@@ -60,9 +68,11 @@ export function handleHookInput(raw, { engine, logger }) {
     // A recorded-only call is still what it is: run_command IS a shell
     // execution, so correlation ("credential read, then shell") must see it.
     actionType: recorded?.actionType ?? primary?.actionType ?? null,
-    toolName: toolCall.name,
-    serverName: isMcp && typeof toolCall.args.ServerName === 'string' ? toolCall.args.ServerName : null,
+    // For an MCP call, the MCP tool and server, as the gateway records them.
+    toolName: mcp ? mcp.tool : toolCall.name,
+    serverName: mcp ? mcp.server : null,
     resource: [recorded?.summary, ...actions.map((a) => `${a.resource.type}:${a.resource.value}`)].filter(Boolean).join(', ') || null,
+    destination: network?.resource.value ?? null,
     decision: final.verdict,
     risk: final.risk,
     rule: final.rule,
@@ -82,7 +92,7 @@ export function handleHookInput(raw, { engine, logger }) {
       // in it is redacted when the event is built (F14).
       commandLine: typeof toolCall.args.CommandLine === 'string' ? toolCall.args.CommandLine.slice(0, 500) : undefined,
       bypassSandbox: toolCall.args.BypassSandbox === true ? true : undefined,
-      mcpTool: isMcp && typeof toolCall.args.ToolName === 'string' ? toolCall.args.ToolName : undefined,
+      via: mcp ? 'call_mcp_tool' : undefined,
     }),
   });
   logger.log(event);
@@ -121,11 +131,6 @@ function recordedSummary({ name, args }) {
   if (name === 'run_command' && typeof args.CommandLine === 'string') {
     const line = args.CommandLine.replace(/\s+/g, ' ').trim();
     return { actionType: 'SHELL_EXEC', summary: `command-line:${line.length > 120 ? `${line.slice(0, 120)}...` : line}` };
-  }
-  if (name === 'call_mcp_tool') {
-    const server = typeof args.ServerName === 'string' ? args.ServerName : '?';
-    const tool = typeof args.ToolName === 'string' ? args.ToolName : '?';
-    return { actionType: 'MCP_TOOL_CALL', summary: `mcp-tool:${server}/${tool}` };
   }
   return null;
 }

@@ -240,11 +240,14 @@ Claude and Gemini models:
 
 Checked today:
 - the target of `read_file` / `write_file` / `edit_file` (`filesystem` rules);
+- MCP calls (`call_mcp_tool`), with the gateway's own translator and rules.
+  This includes **remote (HTTP/SSE) servers, which the gateway cannot
+  wrap**. Servers already behind the gateway are left to it, so a call is
+  never logged twice;
 - known secret patterns in **any** tool's arguments.
 
 Recorded but **not yet enforced**:
-- `run_command` (PowerShell parsing, step 6.3);
-- `call_mcp_tool` (step 6.2).
+- `run_command` (PowerShell parsing, step 6.3).
 
 Unknown tools are allowed with a WARN. Each Antigravity conversation is one
 session, so correlation works across its calls. There is no install command

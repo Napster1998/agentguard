@@ -110,18 +110,77 @@ test('a secret in ANY tool argument is denied, and its value never reaches the a
   }
 });
 
-test('run_command and call_mcp_tool are recorded, not yet enforced (allowed, and the event says so)', () => {
+test('run_command is recorded, not yet enforced (allowed, and the event says so)', () => {
   const cmd = run(real.runCommand('Remove-Item -Recurse C:\\work\\demo', { BypassSandbox: true }));
   assert.deepEqual(cmd.output, { decision: 'allow' });
   assert.match(cmd.events[0].reason, /recorded, not yet enforced/);
   assert.equal(cmd.events[0].metadata.commandLine, 'Remove-Item -Recurse C:\\work\\demo');
   assert.equal(cmd.events[0].metadata.bypassSandbox, true);
+});
 
+test('6.2: call_mcp_tool is evaluated by the gateway\'s own MCP translator, and recorded the way the gateway records it', () => {
   const mcp = run(real.callMcp());
   assert.deepEqual(mcp.output, { decision: 'allow' });
-  assert.equal(mcp.events[0].serverName, 'burpsuite');
-  assert.equal(mcp.events[0].metadata.mcpTool, 'base64_encode');
-  assert.match(mcp.events[0].reason, /recorded, not yet enforced/);
+  const e = mcp.events[0];
+  assert.equal(e.toolName, 'base64_encode');
+  assert.equal(e.serverName, 'burpsuite');
+  assert.equal(e.actionType, 'MCP_TOOL_CALL');
+  assert.equal(e.metadata.via, 'call_mcp_tool');
+  assert.ok(e.resource.includes('mcp-server:burpsuite'));
+});
+
+test('6.2: an MCP call reaching a credentials path is denied (e.g. a filesystem server not wrapped by the gateway)', () => {
+  const p = preToolUse('call_mcp_tool', {
+    Arguments: { path: path.join(os.homedir(), '.aws', 'credentials') },
+    ServerName: 'filesystem',
+    ToolName: 'read_text_file',
+  });
+  const r = run(p);
+  assert.equal(r.output.decision, 'deny');
+  assert.equal(r.events[0].rule, 'filesystem.deny');
+  assert.equal(r.events[0].actionType, 'FILE_READ', 'the resource it is really about, as the gateway records it');
+});
+
+test('6.2: an MCP call\'s network destination meets network.allowed_domains; the server meets mcp.allowed_servers', () => {
+  const engine = new PolicyEngine(
+    applyDefaults({ network: { allowed_domains: ['example.com'] }, mcp: { allowed_servers: ['burpsuite'] } })
+  );
+  // Burp's real send_http1_request argument shape (F10).
+  const burp = (host) =>
+    preToolUse('call_mcp_tool', {
+      Arguments: { content: `GET / HTTP/1.1\r\nHost: ${host}\r\n\r\n`, targetHostname: host, targetPort: 443, usesHttps: true },
+      ServerName: 'burpsuite',
+      ToolName: 'send_http1_request',
+    });
+  const ok = run(burp('example.com'), engine);
+  assert.equal(ok.events[0].decision, 'ALLOW');
+  const unlisted = run(burp('attacker.invalid'), engine);
+  assert.deepEqual(unlisted.output, { decision: 'allow' }, 'an unlisted domain is a WARN, which is allowed (existing policy semantics)');
+  assert.equal(unlisted.events[0].decision, 'WARN');
+  assert.equal(unlisted.events[0].destination, 'attacker.invalid');
+  const otherServer = run(preToolUse('call_mcp_tool', { Arguments: {}, ServerName: 'unknown-remote', ToolName: 'x' }), engine);
+  assert.equal(otherServer.events[0].decision, 'WARN');
+  assert.equal(otherServer.events[0].rule, 'mcp.allowed_servers');
+});
+
+test('6.2: a call to a server already behind the AgentGuard gateway is left to the gateway (allowed here, not logged twice)', () => {
+  const events = [];
+  const raw = JSON.stringify(real.callMcp({ content: 'hello' }));
+  const result = handleHookInput(raw, { engine: shipped, logger: { log: (e) => events.push(e) }, isMcpServerWrapped: (s) => s === 'burpsuite' });
+  assert.deepEqual(result.output, { decision: 'allow' });
+  assert.equal(events.length, 0);
+});
+
+test('6.2: an MCP call that cannot be checked is denied (no server/tool name, arguments not an object)', () => {
+  for (const args of [
+    { Arguments: {}, ToolName: 'x' },
+    { Arguments: {}, ServerName: 'burpsuite' },
+    { Arguments: 'not an object', ServerName: 'burpsuite', ToolName: 'x' },
+  ]) {
+    const r = run(preToolUse('call_mcp_tool', args));
+    assert.equal(r.output.decision, 'deny', JSON.stringify(args));
+    assert.match(r.output.reason, /cannot be checked/);
+  }
 });
 
 test('a recorded-only run_command is still a SHELL_EXEC, so a credential read followed by it is correlated', async () => {
@@ -132,9 +191,6 @@ test('a recorded-only run_command is still a SHELL_EXEC, so a credential read fo
   const shell = run(real.runCommand('git --version')).events[0];
   assert.equal(shell.actionType, 'SHELL_EXEC');
   assert.equal(shell.resource, 'command-line:git --version');
-  const mcp = run(real.callMcp()).events[0];
-  assert.equal(mcp.actionType, 'MCP_TOOL_CALL');
-  assert.equal(mcp.resource, 'mcp-tool:burpsuite/base64_encode');
   const detections = correlate([{ ...blocked, timestamp: '2026-01-01T00:00:01Z' }, { ...shell, timestamp: '2026-01-01T00:00:02Z' }], CONVERSATION);
   assert.ok(detections.some((d) => d.title === 'Credential access chain detected'), JSON.stringify(detections.map((d) => d.title)));
 });

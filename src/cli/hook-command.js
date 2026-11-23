@@ -5,6 +5,7 @@ import { PolicyEngine, applyDefaults } from '../core/policy-engine.js';
 import { AuditLogger } from '../core/audit-logger.js';
 import { handleHookInput, recordFailure, deny } from '../adapters/antigravity/hook-handler.js';
 import { MAX_PAYLOAD_BYTES } from '../adapters/antigravity/payload.js';
+import { antigravityWrappedServers } from '../adapters/antigravity/wrapped-servers.js';
 import { USAGE } from './help.js';
 
 const DEFAULT_DEADLINE_MS = 5000;
@@ -94,7 +95,11 @@ export async function runHookCommand(argv, { stdin = process.stdin, stdout = pro
     const { raw, tooLarge } = await readInput(stdin);
     if (answered) return;
     if (tooLarge) return failClosed('the hook input is larger than 1 MiB.');
-    const { output } = handleHookInput(raw, { engine: new PolicyEngine(policy), logger });
+    const { output } = handleHookInput(raw, {
+      engine: new PolicyEngine(policy),
+      logger,
+      isMcpServerWrapped: antigravityWrappedServers(),
+    });
     answer(output);
   } catch (err) {
     failClosed(`an internal error occurred (${firstLine(err && err.message)}).`);

@@ -2,6 +2,7 @@ import path from 'node:path';
 
 import { createAction } from '../../core/action.js';
 import { findSecretMatches } from '../../core/resource-heuristics.js';
+import { mcpRequestToActions } from '../mcp/translate.js';
 
 /**
  * Translates one Antigravity tool call into Actions.
@@ -16,9 +17,12 @@ import { findSecretMatches } from '../../core/resource-heuristics.js';
  * same way the MCP gateway checks every tool-call argument. On top of that:
  *   - file tools: the target path is a FILE_READ / FILE_WRITE;
  *   - tools that carry text but touch no resource: secrets only;
- *   - run_command, call_mcp_tool: RECORDED, not yet enforced beyond the secret
- *     check (run_command needs the PowerShell parser of Phase 6.3; MCP calls
- *     the translator wiring of Phase 6.2) - the event says so;
+ *   - call_mcp_tool{ServerName, ToolName, Arguments}: becomes the MCP request
+ *     it stands for and goes through the SAME translator as the MCP gateway
+ *     (server allowlist, paths, network destinations, secrets) - unless that
+ *     server is already behind the gateway, which then checks it (Phase 6.2);
+ *   - run_command: RECORDED, not yet enforced beyond the secret check (it
+ *     needs the PowerShell parser of Phase 6.3) - the event says so;
  *   - any other tool: one `agent-tool` action, which the policy engine has no
  *     rule for, so it is WARNed (allowed and logged, never silently trusted).
  */
@@ -45,8 +49,29 @@ const NO_RESOURCE_TOOLS = new Set([
 
 export const RECORDED_ONLY = {
   run_command: 'run_command is recorded, not yet enforced by AgentGuard (only a secret in the command line is checked).',
-  call_mcp_tool: 'call_mcp_tool is recorded, not yet enforced by AgentGuard (only a secret in its arguments is checked).',
 };
+
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * call_mcp_tool -> the MCP `tools/call` it stands for -> the gateway's own
+ * translator, so an MCP call is judged identically whichever way it arrives.
+ */
+function mcpCallToActions(args, context, isMcpServerWrapped) {
+  const server = args.ServerName;
+  const tool = args.ToolName;
+  if (typeof server !== 'string' || !server || typeof tool !== 'string' || !tool) {
+    return { actions: [], error: 'call_mcp_tool was called without a ServerName and ToolName, so the MCP call cannot be checked' };
+  }
+  if (args.Arguments !== undefined && !isPlainObject(args.Arguments)) {
+    return { actions: [], error: `the arguments of the MCP call ${server}/${tool} are not an object, so they cannot be checked` };
+  }
+  if (isMcpServerWrapped(server)) {
+    return { actions: [], skip: `MCP server "${server}" runs behind the AgentGuard gateway, which checks this call` };
+  }
+  const message = { jsonrpc: '2.0', method: 'tools/call', params: { name: tool, arguments: args.Arguments ?? {} } };
+  return { actions: mcpRequestToActions(message, { ...context, serverName: server }), mcp: { server, tool } };
+}
 
 function collectStrings(node, out = []) {
   if (typeof node === 'string') out.push(node);
@@ -69,11 +94,15 @@ function resolveTarget(p, cwd) {
 
 /**
  * @param {{name: string, args: object}} toolCall
- * @param {{cwd: string|null, context: object}} opts
- * @returns {{actions: import('../../core/action.js').Action[], error?: string, note?: string}}
+ * @param {{cwd: string|null, context: object, isMcpServerWrapped?: (server: string) => boolean}} opts
+ * @returns {{actions: import('../../core/action.js').Action[], error?: string, note?: string,
+ *            skip?: string, mcp?: {server: string, tool: string}}}
  */
-export function toolCallToActions(toolCall, { cwd, context }) {
+export function toolCallToActions(toolCall, { cwd, context, isMcpServerWrapped = () => false }) {
   const { name, args } = toolCall;
+  // The MCP translator already secret-scans every string of the MCP arguments.
+  if (name === 'call_mcp_tool') return mcpCallToActions(args, context, isMcpServerWrapped);
+
   const actions = [];
 
   const file = FILE_TOOLS[name];

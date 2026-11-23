@@ -18,12 +18,12 @@ const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = path.join(root, 'bin', 'agentguard.js');
 const POLICY = path.join(root, 'policy', 'default-policy.yaml');
 
-function runHook(input, { args = ['--policy', POLICY], keepOpen = false } = {}) {
+function runHook(input, { args = ['--policy', POLICY], keepOpen = false, env = process.env } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentguard-hook-'));
   const log = path.join(dir, 'audit.jsonl');
   return new Promise((resolve) => {
     const started = Date.now();
-    const child = spawn(process.execPath, [CLI, 'hook', 'antigravity', ...args, '--log', log], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [CLI, 'hook', 'antigravity', ...args, '--log', log], { stdio: ['pipe', 'pipe', 'pipe'], env });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (c) => (stdout += c));
@@ -102,6 +102,35 @@ test('the internal deadline answers deny instead of hanging until Antigravity ki
   const out = assertContract(r, 'deny');
   assert.match(out.reason, /did not finish within 300 ms/);
   assert.ok(r.ms < 4000, `answered in ${r.ms} ms`);
+});
+
+test('6.2: the real CLI reads Antigravity\'s MCP config: a gateway-wrapped server is left to the gateway, any other is checked', async () => {
+  // Sandboxed home, so the real machine's Antigravity config is never read.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'agentguard-hook-home-'));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), LOCALAPPDATA: path.join(home, 'AppData', 'Local') };
+  fs.mkdirSync(path.join(home, '.gemini', 'config'), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, '.gemini', 'config', 'mcp_config.json'),
+    JSON.stringify({
+      mcpServers: {
+        burpsuite: { command: process.execPath, args: [CLI, 'gateway', '--policy', POLICY, '--server-name', 'burpsuite', '--', 'java', '-jar', 'mcp-proxy.jar'] },
+        other: { command: 'java', args: ['-jar', 'other.jar'] },
+      },
+    })
+  );
+  const key = 'AKIAIOSFODNN7EXAMPLE';
+  const call = (server) => ({ ...real.callMcp({ content: key }), toolCall: { name: 'call_mcp_tool', args: { Arguments: { content: key }, ServerName: server, ToolName: 'base64_encode' } } });
+  try {
+    const wrapped = await runHook(call('burpsuite'), { env });
+    assert.deepEqual(assertContract(wrapped, 'allow'), { decision: 'allow' }, 'the gateway in front of burpsuite checks this call itself');
+    assert.equal(wrapped.events.length, 0, 'not logged twice');
+
+    const other = await runHook(call('other'), { env });
+    assert.equal(assertContract(other, 'deny').decision, 'deny');
+    assert.equal(other.events[0].serverName, 'other');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('an unknown hook adapter is a usage error (exit 2), not a silent allow', async () => {
