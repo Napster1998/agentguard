@@ -13,6 +13,9 @@ import {
   ensureAntigravityPolicy,
   writeHooksGroup,
   removeHooksGroup,
+  recordInstall,
+  forgetInstall,
+  recordedInstalls,
 } from '../adapters/antigravity/hooks-config.js';
 
 const RULE = '─'.repeat(40);
@@ -47,13 +50,24 @@ const STATE_TEXT = {
   unparseable: 'not valid JSON (left alone)',
 };
 
-/** Both places Antigravity reads hooks from, for this machine and folder. */
-export function hookLocations({ workspace, homedir = os.homedir(), command }) {
+/**
+ * The places Antigravity reads hooks from that matter here: the global file,
+ * this folder's workspace file, and (for status) every workspace file
+ * `hooks --apply` recorded. The first two are always listed first.
+ */
+export function hookLocations({ workspace, homedir = os.homedir(), command, recorded = [] }) {
+  const globalFile = hooksFileFor({ global: true, homedir });
+  const here = hooksFileFor({ workspace });
+  const workspaceLabel = (file) => `Workspace ${path.dirname(path.dirname(file))}`;
+  const extra = [...new Set(recorded.map((f) => path.resolve(f)))].filter((f) => f !== path.resolve(globalFile) && f !== path.resolve(here));
   return [
-    { label: 'Global (every Antigravity workspace)', ...readHooksState(hooksFileFor({ global: true, homedir }), command) },
-    { label: `Workspace ${path.resolve(workspace)}`, ...readHooksState(hooksFileFor({ workspace }), command) },
+    { label: 'Global (every Antigravity workspace)', ...readHooksState(globalFile, command) },
+    { label: workspaceLabel(here), ...readHooksState(here, command) },
+    ...extra.map((f) => ({ label: workspaceLabel(f), recorded: true, ...readHooksState(f, command) })),
   ];
 }
+
+export { recordedInstalls };
 
 /**
  * `agentguard hooks [--workspace <dir> | --global] [--apply]`
@@ -146,6 +160,7 @@ async function install(target, other, { write, opts, paths, command, deps }) {
 
   try {
     const result = writeHooksGroup(target, command, { backupDir: paths.backups });
+    recordInstall(paths.hookInstalls, result.file);
     write(`✓ ${result.created ? 'created' : 'updated'} ${result.file}\n`);
     if (result.backup) write(`    backup: ${result.backup}\n`);
   } catch (err) {
@@ -170,6 +185,7 @@ function remove(target, { write, opts, paths }) {
   }
   try {
     const result = removeHooksGroup(target, { backupDir: paths.backups });
+    forgetInstall(paths.hookInstalls, result.file);
     write(`\n✓ removed the AgentGuard hook from ${result.file}\n    backup: ${result.backup}\nIt takes effect on the next tool call. Your policy and audit log are kept.\n`);
   } catch (err) {
     write(`\n✗ ${err.message}\n`);

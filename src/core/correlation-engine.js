@@ -18,11 +18,26 @@ import { createDetection } from './detection.js';
 
 const SENSITIVE_RISK = new Set(['HIGH', 'CRITICAL']);
 
+/**
+ * A shell command that itself reached a protected path: one of its own file
+ * checks hit `rule` (e.g. `Get-Content ~/.aws/credentials` through Antigravity's
+ * terminal, or `agentguard exec -- cat ...`). The event as a whole is a
+ * SHELL_EXEC, so without this a credential read done through a terminal was
+ * invisible to the read-then-... rules (found in the Phase 6.3 real-app check).
+ */
+function shellTouched(e, rules) {
+  return (
+    e.actionType === 'SHELL_EXEC' &&
+    Array.isArray(e.subDecisions) &&
+    e.subDecisions.some((s) => s && s.resourceType === 'filesystem' && rules.includes(s.rule))
+  );
+}
+
 function isSensitiveRead(e) {
-  return e.actionType === 'FILE_READ' && SENSITIVE_RISK.has(e.risk);
+  return (e.actionType === 'FILE_READ' && SENSITIVE_RISK.has(e.risk)) || shellTouched(e, ['filesystem.deny', 'filesystem.warn']);
 }
 function isCredentialRead(e) {
-  return e.actionType === 'FILE_READ' && e.risk === 'CRITICAL';
+  return (e.actionType === 'FILE_READ' && e.risk === 'CRITICAL') || shellTouched(e, ['filesystem.deny']);
 }
 function isShellExec(e) {
   return e.actionType === 'SHELL_EXEC';

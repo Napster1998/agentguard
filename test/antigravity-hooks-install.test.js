@@ -199,7 +199,7 @@ test('--global installs into ~/.gemini/config/hooks.json; status warns when glob
     const both = cli(['hooks', '--workspace', s.workspace], s.env);
     assert.match(both.stdout, /also has the AgentGuard hook: every tool call would be checked, and logged, twice/);
     cli(['hooks', '--workspace', s.workspace, '--apply'], s.env);
-    assert.match(cli(['status', '--project', s.workspace], s.env).stdout, /installed globally AND in this workspace/);
+    assert.match(cli(['status', '--project', s.workspace], s.env).stdout, /installed globally AND in Workspace .*project: every tool call there is checked, and logged, twice/);
   } finally {
     s.cleanup();
   }
@@ -255,6 +255,26 @@ test('status warns loudly when the hook keeps rejecting Antigravity\'s input (it
     const status = cli(['status', '--project', s.workspace], s.env).stdout;
     assert.match(status, /all rejected Antigravity's input .* blocking every tool call/);
     assert.match(status, /fields received: conversationId, toolCall/);
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('status finds a workspace install from ANY folder (installs are remembered); remove forgets it', () => {
+  const s = sandbox();
+  const elsewhere = path.join(s.home, 'somewhere-else');
+  fs.mkdirSync(elsewhere);
+  try {
+    assert.equal(cli(['hooks', '--workspace', s.workspace, '--apply'], s.env).status, 0);
+    const fromElsewhere = cli(['status', '--project', elsewhere], s.env).stdout;
+    assert.ok(fromElsewhere.includes(`✓ Workspace ${s.workspace}: protected`), fromElsewhere);
+    // Taken out by hand (or rewritten by the app): status says so instead of forgetting it.
+    fs.writeFileSync(s.hooksFile, '{}\n');
+    assert.match(cli(['status', '--project', elsewhere], s.env).stdout, /installed by agentguard hooks, but the hook is no longer there/);
+    // A proper remove forgets the install.
+    cli(['hooks', '--workspace', s.workspace, '--apply'], s.env);
+    cli(['hooks', 'remove', '--workspace', s.workspace, '--apply'], s.env);
+    assert.ok(!cli(['status', '--project', elsewhere], s.env).stdout.includes(s.workspace));
   } finally {
     s.cleanup();
   }

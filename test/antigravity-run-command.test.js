@@ -155,6 +155,28 @@ test('6.3: on Linux/macOS the strict cross-shell parser (F16) is used until a re
   assert.equal(events[0].rule, 'shell.deny');
 });
 
+test('6.3 on Linux/macOS: a recursive search from the home folder or above is flagged too (grep -r, rg, find, ls -R)', () => {
+  const linux = (line) => {
+    const events = [];
+    handleHookInput(JSON.stringify({ ...real.runCommand(line), cwd: '/home/dev/DemoFiles', workspacePaths: ['/home/dev/DemoFiles'] }), {
+      engine: AGENT,
+      logger: { log: (e) => events.push(e) },
+      platform: 'linux',
+      homedir: '/home/dev',
+    });
+    return events[0];
+  };
+  const flagged = (e) => e.subDecisions.some((s) => s.rule === 'filesystem.recursive_search_from_home');
+  for (const line of ['grep -r AKIA /home/dev', 'grep -rn AKIA ~', 'grep -R -e AKIA /', 'rg AKIA /home/dev', 'find ~ -name credentials', 'find / -type f', 'ls -lR /home', 'cd /tmp && grep -r AKIA /home/dev']) {
+    const e = linux(line);
+    assert.ok(flagged(e), `${line}: ${JSON.stringify(e.subDecisions)}`);
+    assert.notEqual(e.decision, 'BLOCK', `${line}: a WARN, not a block`);
+  }
+  for (const line of ['grep -r AKIA .', 'grep AKIA /home/dev/notes.txt', 'rg AKIA', 'find . -name x', 'ls -la /home/dev', 'grep -r /home/dev src']) {
+    assert.ok(!flagged(linux(line)), `${line} must not be flagged`);
+  }
+});
+
 // ---- the REAL PowerShell parser (Windows only) ----
 const onWindows = { skip: process.platform !== 'win32' && 'needs Windows PowerShell' };
 

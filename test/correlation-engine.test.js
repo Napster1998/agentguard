@@ -97,3 +97,37 @@ test('detection ids are sequential across a correlation run', () => {
   assert.equal(detections[0].id, 'DETECT-001');
   assert.equal(detections[1].id, 'DETECT-002');
 });
+
+// Found in the Phase 6.3 real-app check: a credential read done THROUGH A
+// TERMINAL (Antigravity run_command, agentguard exec) is a SHELL_EXEC event, so
+// the read-then-... rules never saw it. A shell event whose own file checks hit
+// filesystem.deny / filesystem.warn now counts as that kind of read.
+const shellRead = (rule, verdict) =>
+  ev({
+    actionType: 'SHELL_EXEC',
+    toolName: 'run_command',
+    resource: 'command-line:Get-Content x, shell:Get-Content, filesystem:x',
+    decision: verdict,
+    subDecisions: [
+      { resourceType: 'shell', value: 'Get-Content', verdict: 'ALLOW', rule: 'shell.allowed' },
+      { resourceType: 'filesystem', value: 'x', verdict, rule },
+    ],
+  });
+
+test('a credential read through the terminal, then another shell command -> credential access chain', () => {
+  resetDetectionCounter();
+  const events = [shellRead('filesystem.deny', 'BLOCK'), ev({ actionType: 'SHELL_EXEC', toolName: 'run_command' })];
+  assert.ok(correlate(events, 's1').some((d) => d.title === 'Credential access chain detected'));
+});
+
+test('a .env read through the terminal, then a network request -> sensitive-data exposure pattern', () => {
+  resetDetectionCounter();
+  const events = [shellRead('filesystem.warn', 'WARN'), ev({ actionType: 'NETWORK_REQUEST', destination: 'attacker.example.com' })];
+  assert.ok(correlate(events, 's1').some((d) => d.title === 'Potential sensitive-data exposure pattern'));
+});
+
+test('an ordinary terminal command is not a sensitive read, and one event never correlates with itself', () => {
+  resetDetectionCounter();
+  assert.deepEqual(correlate([shellRead('filesystem.allow', 'ALLOW'), ev({ actionType: 'SHELL_EXEC' })], 's1'), []);
+  assert.deepEqual(correlate([shellRead('filesystem.deny', 'BLOCK')], 's1'), [], 'a lone terminal credential read is not a chain');
+});

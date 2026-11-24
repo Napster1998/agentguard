@@ -5,6 +5,7 @@ import { createAction } from '../../core/action.js';
 import { URL_RE, extractHostname, looksLikePath, isInterpreterEvalAttempt } from '../../core/resource-heuristics.js';
 import { normalizeBinary } from '../../core/policy-engine.js';
 import { commandLineToActions } from '../shell/argv-actions.js';
+import { parseCommandLine } from '../../core/command-line.js';
 import { parsePowerShell as defaultParsePowerShell } from './powershell-parser.js';
 import {
   ALIASES,
@@ -44,9 +45,10 @@ import {
  *     (filesystem.recursive_search_from_home).
  *  7. BypassSandbox:true is flagged (shell.unsandboxed).
  *
- * On other systems the strict cross-shell parser (F16) is used. Verified on
- * Linux (Phase 6.5): Antigravity runs commands there in a non-interactive bash,
- * and the F16 grammar is a safe subset of it. macOS is untested.
+ * On other systems the strict cross-shell parser (F16) is used, plus rule 6
+ * for grep -r / rg / find / ls -R (posixRecursiveSearches). Verified on Linux
+ * (Phase 6.5): Antigravity runs commands there in a non-interactive bash, and
+ * the F16 grammar is a safe subset of it. macOS is untested.
  *
  * Residuals, stated: what an allowed program does on its own (npm scripts, git
  * config) is not judged (F2 class); file targets that arrive through the
@@ -64,7 +66,7 @@ export function runCommandToActions(args, opts) {
     actions.push(createAction({ verb: 'execute', resourceType: 'shell-unsandboxed', resourceValue: 'BypassSandbox', context }));
   }
   if ((opts.platform ?? process.platform) !== 'win32') {
-    actions.push(...commandLineToActions(line, context));
+    actions.push(...commandLineToActions(line, context), ...posixRecursiveSearches(line, opts));
     return { actions };
   }
   actions.push(...powerShellLineToActions(line, opts));
@@ -176,6 +178,68 @@ function powerShellLineToActions(line, { cwd, context, shellPolicy, parsePowerSh
     if (CHANGES_DIRECTORY.has(key) && paths[0]) dir = paths[0];
   }
   return actions;
+}
+
+/**
+ * Rule 6 for bash (Linux/macOS): grep -r/-R, rg, find and ls -R rooted at the
+ * home folder or above. The search root is the first operand that is not the
+ * search pattern (grep/rg take the pattern first unless -e/-f gives it), or
+ * the workspace when none is given. A line the strict parser refuses is
+ * already blocked, so only parsed lines are looked at.
+ */
+const POSIX_RECURSIVE = {
+  grep: { recursive: (flags) => flags.some((f) => f === '--recursive' || /^-[a-zA-Z]*[rR]/.test(f)), patternFirst: true },
+  egrep: { recursive: (flags) => flags.some((f) => f === '--recursive' || /^-[a-zA-Z]*[rR]/.test(f)), patternFirst: true },
+  rg: { recursive: () => true, patternFirst: true },
+  find: { recursive: () => true, patternFirst: false, findStyle: true },
+  ls: { recursive: (flags) => flags.some((f) => f === '--recursive' || /^-[a-zA-Z]*R/.test(f)), patternFirst: false },
+};
+
+function posixRecursiveSearches(line, { cwd, context, homedir = os.homedir() }) {
+  const parsed = parseCommandLine(line);
+  if (!parsed.ok) return [];
+  const actions = [];
+  for (const { argv } of parsed.commands) {
+    const spec = POSIX_RECURSIVE[normalizeBinary(argv[0])];
+    if (!spec) continue;
+    const args = argv.slice(1);
+    const flags = args.filter((a) => a.startsWith('-'));
+    if (!spec.recursive(flags)) continue;
+    // find: operands come before the first expression (-name, (, !, ...).
+    const { operands, patternGiven } = spec.patternFirst
+      ? grepOperands(args)
+      : { operands: spec.findStyle ? takeWhileOperand(args) : args.filter((a) => !a.startsWith('-')), patternGiven: true };
+    const roots = patternGiven ? operands : operands.slice(1);
+    const root = roots.length ? resolveIn(cwd, roots[0]) : cwd;
+    if (root && isHomeOrAbove(root, homedir)) {
+      actions.push(createAction({ verb: 'read', resourceType: 'filesystem-recursive', resourceValue: root, context }));
+    }
+  }
+  return actions;
+}
+
+/** grep/rg operands, skipping the value of -e/-f (the pattern, when given that way). */
+function grepOperands(args) {
+  const operands = [];
+  let patternGiven = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith('--regexp=') || a.startsWith('--file=')) patternGiven = true;
+    else if (a === '--regexp' || a === '--file' || /^-[a-zA-Z]*[ef]$/.test(a)) {
+      patternGiven = true;
+      i++; // its value
+    } else if (!a.startsWith('-')) operands.push(a);
+  }
+  return { operands, patternGiven };
+}
+
+function takeWhileOperand(args) {
+  const out = [];
+  for (const a of args) {
+    if (a.startsWith('-') || a === '(' || a === '!') break;
+    out.push(a);
+  }
+  return out;
 }
 
 /** Script blocks are fine anywhere (the commands inside are checked on their own); other computed values only where they cannot pick a target. */

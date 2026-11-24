@@ -165,6 +165,30 @@ export function writeHooksGroup(stateInfo, command, { backupDir }) {
   return { file, backup, created: false };
 }
 
+/**
+ * The list of hooks.json files `agentguard hooks --apply` has written to, kept
+ * in ~/.agentguard/antigravity-hooks.json, so `status` can find a workspace
+ * install from any folder. A missing or unreadable list is simply empty.
+ */
+export function recordedInstalls(registry) {
+  try {
+    const files = JSON.parse(fs.readFileSync(registry, 'utf8')).files;
+    return Array.isArray(files) ? files.filter((f) => typeof f === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveInstalls(registry, files) {
+  fs.mkdirSync(path.dirname(registry), { recursive: true });
+  const tmp = `${registry}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify({ files: [...new Set(files)].sort() }, null, 2) + '\n');
+  fs.renameSync(tmp, registry);
+}
+
+export const recordInstall = (registry, file) => saveInstalls(registry, [...recordedInstalls(registry), path.resolve(file)]);
+export const forgetInstall = (registry, file) => saveInstalls(registry, recordedInstalls(registry).filter((f) => f !== path.resolve(file)));
+
 /** Removes only the "agentguard" group (backup first). */
 export function removeHooksGroup(stateInfo, { backupDir }) {
   const { info } = stateInfo;

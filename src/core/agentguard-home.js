@@ -16,6 +16,9 @@ export function homePaths({ env = process.env, homedir = os.homedir() } = {}) {
     // policy/antigravity-policy.yaml), kept separate so installing the hook
     // never changes what the MCP gateway enforces.
     antigravityPolicy: path.join(home, 'antigravity-policy.yaml'),
+    // Where `agentguard hooks --apply` installed the hook, so `status` can check
+    // every install, not only the global one and the current folder's.
+    hookInstalls: path.join(home, 'antigravity-hooks.json'),
     audit: path.join(home, 'audit.jsonl'),
     backups: path.join(home, 'backups'),
   };

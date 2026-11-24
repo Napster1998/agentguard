@@ -266,7 +266,8 @@ cmdlets allowed, destructive ones denied):
 **On Linux** (verified on one machine) Antigravity runs terminal commands in a
 non-interactive bash, and AgentGuard reads them with the strict cross-shell
 parser (F16). A command using `$`, wildcards and the like is blocked rather
-than guessed at, and there is no recursive-search check there yet.
+than guessed at. `grep -r`, `rg`, `find` and `ls -R` rooted at the home folder
+or above get the same recursive-search WARN as on Windows.
 
 Linux results from the real app:
 - `ls` gave a WARN;
@@ -310,7 +311,12 @@ undo it: `agentguard hooks remove --global --apply`.
 
 Both locations were verified in the real app: a workspace's
 `.agents/hooks.json`, and the global `~/.gemini/config/hooks.json`, which
-blocked a credentials read in a folder outside any project.
+blocked a credentials read in a folder outside any project. `status` checks
+every workspace `hooks --apply` installed into, from any folder.
+
+The whole story is in [docs/PHASE6-ANTIGRAVITY.md](docs/PHASE6-ANTIGRAVITY.md):
+the validation spike, the design, findings F14–F18, real-app results on
+Windows and Linux, and the limits.
 
 `shell.deny` (new) is checked *before* `shell.allowed` and always wins, even
 for a binary also present in `allowed` — a second layer for commands that
@@ -592,9 +598,11 @@ resulting `Detection`s beneath that session.
   - A recursive search that starts at the workspace can still reach a
     credential folder *inside* the workspace; only a search starting at home
     or above is flagged.
-  - Correlation counts a credential read done *through the terminal* as a
-    shell command, not as a file read. So "credential read, then shell" fires
-    for `read_file` but not for `Get-Content`.
+  - A terminal command that reached a protected path counts as that kind of
+    read for correlation, so "credential read, then shell" fires for
+    `Get-Content` as well as `read_file`. One command line is still one
+    event, so `cat creds | curl ...` in a single line is not a *sequence*;
+    its parts are blocked or flagged on their own.
 - **A folder rule covers the folder itself, not its parents.** `~/.aws/**`
   now also BLOCKs listing or searching `~/.aws` (F15), but a recursive search
   of your home folder names nothing denied, so path matching cannot judge it.
@@ -619,7 +627,7 @@ Requires Node.js 20+.
 
 ```bash
 npm install
-npm test        # 297 tests: policy/risk engine, translation, discovery, correlation,
+npm test        # 306 tests: policy/risk engine, translation, discovery, correlation,
                  # response inspection, exec wrapper, wrap/unwrap/status (all with fake
                  # data sources or a sandboxed fake home where possible) + real
                  # end-to-end proxy/exec/CLI process spawns, plus 71 security-validation

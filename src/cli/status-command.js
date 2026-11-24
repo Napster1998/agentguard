@@ -5,7 +5,7 @@ import yaml from 'js-yaml';
 import { bold } from '../core/colors.js';
 import { buildContext, selectTargets, planAll, wrapperProblems, duplicateClientNotes } from '../adapters/wrap/orchestrate.js';
 import { readEvents } from './events-command.js';
-import { hookLocations } from './hooks-command.js';
+import { hookLocations, recordedInstalls } from './hooks-command.js';
 import { buildHookCommand } from '../adapters/antigravity/hooks-config.js';
 
 const HOOK_MARK = { installed: '✓', stale: '⚠', disabled: '⚠', foreign: '⚠', unparseable: '⚠', none: '·', absent: '·' };
@@ -31,9 +31,18 @@ export function formatHooksSection(ctx, events) {
   } catch {
     /* unsafe install path: every location then reads as "stale" */
   }
-  const locations = hookLocations({ workspace: ctx.cwd || process.cwd(), homedir: ctx.homedir || os.homedir(), command });
+  const locations = hookLocations({
+    workspace: ctx.cwd || process.cwd(),
+    homedir: ctx.homedir || os.homedir(),
+    command,
+    recorded: recordedInstalls(ctx.paths.hookInstalls),
+  });
   const lines = [bold('Antigravity hooks')];
-  for (const l of locations) lines.push(`${HOOK_MARK[l.state]} ${l.label}: ${HOOK_TEXT[l.state]}`, `    ${l.file}`);
+  for (const l of locations) {
+    // A recorded install whose hook is gone (removed by hand, or the app rewrote the file) is worth saying.
+    const text = l.recorded && (l.state === 'absent' || l.state === 'none') ? 'installed by agentguard hooks, but the hook is no longer there' : HOOK_TEXT[l.state];
+    lines.push(`${HOOK_MARK[l.state]} ${l.label}: ${text}`, `    ${l.file}`);
+  }
 
   const problems = [];
   const active = locations.filter((l) => ['installed', 'stale', 'disabled'].includes(l.state));
@@ -44,7 +53,10 @@ export function formatHooksSection(ctx, events) {
       problems.push(`${l.label}: the hook cannot start (missing ${missing.join(', ')}), so Antigravity will BLOCK every tool call. Run agentguard hooks ... --apply, or agentguard hooks remove ... --apply.`);
     }
   }
-  if (active.length > 1) problems.push('AgentGuard is installed globally AND in this workspace: every tool call is checked, and logged, twice.');
+  const globalActive = ['installed', 'stale', 'disabled'].includes(locations[0].state);
+  for (const l of active.slice(globalActive ? 1 : active.length)) {
+    if (l !== locations[0]) problems.push(`AgentGuard is installed globally AND in ${l.label}: every tool call there is checked, and logged, twice.`);
+  }
 
   const mine = events.filter((e) => e.source === 'antigravity-hook');
   const last = mine.map((e) => e.timestamp).filter(Boolean).sort().pop();
