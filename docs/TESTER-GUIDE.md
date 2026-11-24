@@ -147,6 +147,9 @@ To see it work, ask Antigravity: *"Use the terminal to show the contents of
 `agentguard events` shows a BLOCK. Undo it with
 `agentguard hooks remove --global --apply`.
 
+For a before/after demonstration, see
+[DEMO-LINUX-ANTIGRAVITY.md](DEMO-LINUX-ANTIGRAVITY.md).
+
 Antigravity **blocks every tool call** if its hook is broken, for example
 after you move the agentguard folder or upgrade Node. Run `agentguard status`
 to check it. To recover, run `agentguard hooks ... --apply` again to repair
